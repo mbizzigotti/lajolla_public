@@ -26,20 +26,20 @@ Put your answers on Gradescope (like the questions in Homework 1 and 2). There i
 
 A big difference between a production renderer and a course renderer like lajolla is how they handle materials. In UE (and most production rendering systems), all the materials are represented through the material/shader graphs. Feel free to find whatever resources you can find.
 
-\paragraph{Task 1 (6.25\%): create your own material.} The easiest way to understand shader graphs is to play with it yourself. In this task, you should create a material, and assign it to an object in Unreal Engine. Open an empty games project, drop an object of your choice into the scene (e.g., the \lstinline{SM_MatPreviewMesh_01} mesh in the Engine Meshes folder), and play with its material. You can choose to use either the \href{https://dev.epicgames.com/documentation/en-us/unreal-engine/unreal-engine-materials}{default material system} or the newer, more experimental Substrate material. Your material should have spatially varying properties other than just the base color. Your material should have at least two ``layers''. Check out the documentation of \href{https://dev.epicgames.com/documentation/en-us/unreal-engine/layering-materials-in-unreal-engine}{Layered Materials} for the standard materials. 
+\paragraph{Question 1 (6.66\%): create your own material.} The easiest way to understand shader graphs is to play with it yourself. In this task, you should create a material, and assign it to an object in Unreal Engine. Open an empty games project, drop an object of your choice into the scene (e.g., the \lstinline{SM_MatPreviewMesh_01} mesh in the Engine Meshes folder), and play with its material. You can choose to use either the \href{https://dev.epicgames.com/documentation/en-us/unreal-engine/unreal-engine-materials}{default material system} or the newer, more experimental Substrate material. Your material should have spatially varying properties other than just the base color. Your material should have at least two ``layers''. Check out the documentation of \href{https://dev.epicgames.com/documentation/en-us/unreal-engine/layering-materials-in-unreal-engine}{Layered Materials} for the standard materials. 
 Substrate uses a different layering mechanism and you should check out Substrate's \href{https://dev.epicgames.com/documentation/en-us/unreal-engine/overview-of-substrate-materials-in-unreal-engine}{documentation} if you are going with Substrate.
 Feel free to use procedurally generated textures or the textures provided in the engine, or to download textures on your own. You can find free models and textures in \href{https://www.fab.com/}{Fab}.
 Also feel free to simply follow tutorials.
 
 Once you are done, record a video walkthrough of you looking around the object. Also take screenshots of your material/shader graph to show your material.
 
-\paragraph{Question 1 (6.25\%):} Briefly explain your design of the material graph. How does the material graph help you design the material? What advantages (or disadvantages) it has compared to the more fixed function design in lajolla?
+\paragraph{Question 2 (6.66\%):} Briefly explain your design of the material graph. How does the material graph help you design the material? What advantages (or disadvantages) it has compared to the more fixed function design in lajolla?
 
-\paragraph{Question 2 (6.25\%):} Are the \emph{Layered Materials} the same as the layered BSDFs we talked about in the class? If they are different, what are the differences?
+\paragraph{Question 3 (6.66\%):} Are the \emph{Layered Materials} the same as the layered BSDFs we talked about in the class? If they are different, what are the differences?
 
-\paragraph{Question 3 (6.25\%):} Read the Unreal Engine 5 source code and figure out what kind of BSDFs they used. We will focus on the standard materials for the following questions. They are defined in \lstinline{IntegrateBxDF()} in \lstinline{UnrealEngine/Engine/Shaders/Private/ShadingModels.ush}\footnote{For substrate, the similar routine is defined in \lstinline{SubstrateEvaluateBSDFCommon()} in \lstinline{UnrealEngine/Engine/Shaders/Private/Substrate/SubstrateEvaluation.ush}. But you don't need to read it.}. Read the \lstinline{DefaultLitBxDF()}routine and explain what they do. A high-level explanation is sufficient, no need to go to the nitty-gritty details. Ignore the clearcoat, subsurface, hair, cloth, and eye materials for now.
+\paragraph{Question 4 (6.66\%):} Read the Unreal Engine 5 source code and figure out what kind of BSDFs they used. We will focus on the standard materials for the following questions. They are defined in \lstinline{IntegrateBxDF()} in \lstinline{UnrealEngine/Engine/Shaders/Private/ShadingModels.ush}\footnote{For substrate, the similar routine is defined in \lstinline{SubstrateEvaluateBSDFCommon()} in \lstinline{UnrealEngine/Engine/Shaders/Private/Substrate/SubstrateEvaluation.ush}. But you don't need to read it.}. Read the \lstinline{DefaultLitBxDF()}routine and explain what they do. A high-level explanation is sufficient, no need to go to the nitty-gritty details. Ignore the clearcoat, subsurface, hair, cloth, and eye materials for now.
 
-\paragraph{Question 4 (6.25\%):} Continue on above, read the \lstinline{HairBxDF} routine (which will lead you to the \lstinline{HairShading} routine in \lstinline{UnrealEngine/Engine/Shaders/Private/HairBsdf.ush}) and explain what it does. Again, a high-level explanation is good enough.
+\paragraph{Question 5 (6.66\%):} Continue on above, read the \lstinline{HairBxDF} routine (which will lead you to the \lstinline{HairShading} routine in \lstinline{UnrealEngine/Engine/Shaders/Private/HairBsdf.ush}) and explain what it does. Again, a high-level explanation is good enough.
 
 If you are interested, you can continue reading on other materials including Clearcoat and Cloth, but we do not grade them.
 
@@ -47,14 +47,12 @@ Next, we will play with the virtual texture system in Unreal Engine. In modern r
 
 I also find \href{https://www.youtube.com/watch?v=SxQ1oOaaoT8}{this Youtube video} from Ben Cloward very informative.
 
-\paragraph{Task 2: runtime virtual texturing (6.25\%).} Turn on runtime virtual texturing for your material. Show the performace difference by pressing \lstinline{`} and input \lstinline{stat unit}. For the virtual texturing statistics, you can press \lstinline{`} and input \lstinline{stat virtualtexturing}.
-As an (ungraded) bonus, modify your scene and materials until runtime virtual texturing gives an observable difference in the performance (you may need to significantly increase the complexity of the shaders and/or to assign materials to the terrain as well).
+\paragraph{Question 6: runtime virtual texturing (6.66\%).} Turn on runtime virtual texturing for your material. Show the performace difference by pressing \lstinline{`} and input \lstinline{stat unit}. For the virtual texturing statistics, you can press \lstinline{`} and input \lstinline{stat virtualtexturing}.
+As an (ungraded) bonus, modify your scene and materials until runtime virtual texturing gives an observable difference in the performance (you may need to significantly increase the complexity of the shaders and/or to assign materials to the terrain as well). Did you observe performance difference after turning runtime virtual texturing on? Why or why now? When do you expect runtime virtual texturing to bring performance gain?
 
-\paragraph{Question 5 (6.25\%):} Did you observe performance difference after turning runtime virtual texturing on? Why or why now? When do you expect runtime virtual texturing to bring performance gain?
+\paragraph{Question 7 (6.66\%):} What are the differences between streaming virtual texturing and runtime virtual texturing? For what kind of textures/material would you use runtime virtual texturing, and for what kind would you use streaming virtual texturing?
 
-\paragraph{Question 6 (6.25\%):} What are the differences between streaming virtual texturing and runtime virtual texturing? For what kind of textures/material would you use runtime virtual texturing, and for what kind would you use streaming virtual texturing?
-
-\paragraph{Question 7 (6.25\%):} If you were to implement streaming virtual texturing inside lajolla (on CPUs), how would you do it? Briefly describing your high-level plan is good enough.
+\paragraph{Question 8 (6.66\%):} If you were to implement streaming virtual texturing inside lajolla (on CPUs), how would you do it? Briefly describing your high-level plan is good enough.
 
 \section{Temporal antialiasing and upscaling}
 
@@ -73,11 +71,11 @@ For \lstinline{r.screenPercentage}, try out values of 100, 75, 50, 25.
 For \lstinline{r.AntialiasingMethod}, try out values of 0 and 2. Move the camera around.
 Observe the difference. 
 
-\paragraph{Question 8 (6.25\%):} Explain what \lstinline{r.screenPercentage} does. In UE5, you can hover to the command with your mouse cursor to inspect. In UE4, you can to go to Windows->Developer Tools->Output Log and turn on the console output. Then type \lstinline{r.screenPercentage ?} to see the explanation of the command. If you were tasked to implement \lstinline{r.screenPercentage 50} in lajolla (without temporal antialiasing), how would you do it? A brief explanation is fine.
+\paragraph{Question 9 (6.66\%):} Explain what \lstinline{r.screenPercentage} does. In UE5, you can hover to the command with your mouse cursor to inspect. In UE4, you can to go to Windows $\rightarrow$ Developer Tools $\rightarrow$ Output Log and turn on the console output. Then type \lstinline{r.screenPercentage ?} to see the explanation of the command. If you were tasked to implement \lstinline{r.screenPercentage 50} in lajolla (without temporal antialiasing), how would you do it? A brief explanation is fine.
 
-\paragraph{Question 9 (6.25\%):} Explain what \lstinline{r.AntiAliasingMethod} or \lstinline{r.DefaultFeature.AntiAliasing} does for different parameter values. Try using \lstinline{r.AntiAliasingMethod 3} or \lstinline{r.DefaultFeature.AntiAliasing 3}. Did the output change? Why or why not?
+\paragraph{Question 10 (6.66\%):} Explain what \lstinline{r.AntiAliasingMethod} or \lstinline{r.DefaultFeature.AntiAliasing} does for different parameter values. Try using \lstinline{r.AntiAliasingMethod 3} or \lstinline{r.DefaultFeature.AntiAliasing 3}. Did the output change? Why or why not?
 
-\paragraph{Question 10 (6.25\%):} Describe the visual differences between different settings. Which setting do you prefer the most? Why?
+\paragraph{Question 11 (6.66\%):} Describe the visual differences between different settings. Which setting do you prefer the most? Why?
 
 \begin{figure}[h]
 	\centering
@@ -92,11 +90,11 @@ Observe the difference.
 	\caption{Turning on \lstinline{ShowFlag.VisualizeMotionBlur} (left) and \lstinline{ShowFlag.VisualizeReprojection} (right) in UE5.}
 \end{figure}
 
-Next, if you are using UE4, answer Question 11a. If you are using UE5, answer Question 11b.
+Next, if you are using UE4, answer Question 12a. If you are using UE5, answer Question 12b.
 
-\paragraph{Question 11a (6.25\%):} Turn on the motion vector visualization by setting \lstinline{ShowFlag.VisualizeMotionBlur 1} in the console command (press \lstinline{`}). Move your camera around. Use \lstinline{ShowFlag.VisualizeMotionBlur 2} (or 0) to turn it off. How were these motion vectors used in temporal antialiasing? If you were getting blurry results earlier, does this visualization explain your earlier results? Why?
+\paragraph{Question 12a (6.66\%):} Turn on the motion vector visualization by setting \lstinline{ShowFlag.VisualizeMotionBlur 1} in the console command (press \lstinline{`}). Move your camera around. Use \lstinline{ShowFlag.VisualizeMotionBlur 2} (or 0) to turn it off. How were these motion vectors used in temporal antialiasing? If you were getting blurry results earlier, does this visualization explain your earlier results? Why?
 
-\paragraph{Question 11b (6.25\%):} Turn on the motion vector visualization by setting \lstinline{ShowFlag.VisualizeMotionBlur 1} in the console command (press \lstinline{`}). Move your camera around. Use \lstinline{ShowFlag.VisualizeMotionBlur 2} (or 0) to turn it off. Similarly, turn on \lstinline{ShowFlag.VisualizeReprojection 1} and move your camera around.
+\paragraph{Question 12b (6.66\%):} Turn on the motion vector visualization by setting \lstinline{ShowFlag.VisualizeMotionBlur 1} in the console command (press \lstinline{`}). Move your camera around. Use \lstinline{ShowFlag.VisualizeMotionBlur 2} (or 0) to turn it off. Similarly, turn on \lstinline{ShowFlag.VisualizeReprojection 1} and move your camera around.
 Explain what \lstinline{VisualizeReprojection} is visualizing, and how it is different from the motion vector visualization. (Hint: you may find the answer in the official documentation \href{https://dev.epicgames.com/documentation/en-us/unreal-engine/temporal-upscalers-in-unreal-engine}{here}.)
 If you want to tweak your temporal antialiasing algorithm, how would you make use of these two visualizations?
 
@@ -125,16 +123,16 @@ If you want to tweak your temporal antialiasing algorithm, how would you make us
 
 Let's play with global illumination in the last part. 
 For UE4, the default setting heavily rely on precomputed lighting. 
-You may want to diable static lighting by going to Edit->Project Setting and check off Allow Static Lighting, and in the World Setting on the right to turn on Force No Precomputed Lighting, to understand better the limitations and behaviors of dynamic global illumiantion methods. 
+You may want to diable static lighting by going to Edit $\rightarrow$ Project Setting and check off Allow Static Lighting, and in the World Setting on the right to turn on Force No Precomputed Lighting, to understand better the limitations and behaviors of dynamic global illumiantion methods. 
 
-First, let's play with screen-space methods. To change the global illumination method, go the Edit->Project Setting and search for global illumination. 
+First, let's play with screen-space methods. To change the global illumination method, go the Edit $\rightarrow$ Project Setting and search for global illumination. 
 Create your own scene where the effect of indirect illumination is significant enough and experiment a bit.
 Unfortunately Lumen is not supported in UE4, but you can still read about it in the \href{https://dev.epicgames.com/documentation/en-us/unreal-engine/lumen-global-illumination-and-reflections-in-unreal-engine}{official documentation} and their SIGGRAPH \href{https://advances.realtimerendering.com/s2022/SIGGRAPH2022-Advances-Lumen-Wright%20et%20al.pdf}{talk}.
 
-\paragraph{Question 12 (6.25\%):} \Cref{fig:gi} shows 4 rendering of the same scene using the screen-space GI method and Lumen respectively. In the last two images, you can see that the indirect illumination disappears from the screen-space GI result, but Lumen does not suffer from the problem. Why?
+\paragraph{Question 13 (6.66\%):} \Cref{fig:gi} shows 4 rendering of the same scene using the screen-space GI method and Lumen respectively. In the last two images, you can see that the indirect illumination disappears from the screen-space GI result, but Lumen does not suffer from the problem. Why?
 
-\paragraph{Question 13 (6.25\%):} In the first two images in \Cref{fig:gi}, SSGI's rendering seems more noise compared to Lumen (you may need to zoom in). What do you think could be the reason? (This is an open question -- I do not have the definite answer. Make your best guess.)
+\paragraph{Question 14 (6.66\%):} In the first two images in \Cref{fig:gi}, SSGI's rendering seems more noisy compared to Lumen (you may need to zoom in). What do you think could be the reason? (This is an open question -- I do not have the definite answer. Make your best guess.)
 
-\paragraph{Task 3: break the GI algorithm! (6.25\%)} Create a scene that makes the dynamic GI algorithm in UE generates undesirable artifacts. For UE4, use the Light Propagation Volume (check out \href{https://www.youtube.com/watch?v=t9MbdgJkq9M}{this video} for a tutorial). For UE5, use Lumen. What counts as undesirable artifacts is very loose here: anything you do not like can be counted as undesirable! (Even if it is actually physically correct.) Take a screenshot (or video if you want to show temporal artifacts). Explain what is wrong. Make some guess of why the artifacts are produced.
+\paragraph{Question 15: break the GI algorithm! (6.67\%)} Create a scene that makes the dynamic GI algorithm in UE generates undesirable artifacts. For UE4, use the Light Propagation Volume (check out \href{https://www.youtube.com/watch?v=t9MbdgJkq9M}{this video} for a tutorial). For UE5, use Lumen. What counts as undesirable artifacts is very loose here: anything you do not like can be counted as undesirable! (Even if it is actually physically correct.) Take a screenshot (or video if you want to show temporal artifacts). Explain what is wrong. Make some guess of why the artifacts are produced.
 
 \end{document}
