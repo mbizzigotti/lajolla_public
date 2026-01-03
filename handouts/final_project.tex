@@ -5,6 +5,7 @@
 \header{3}{Final Project}
 
 The final project will be a project of your choice. You can implement some non-trivial rendering algorithms, or render some interesting scenes in lajolla or your own renderer. It can also be a rendering-related research project with a new algorithm or system. 
+Even if you want to do research in this space, starting from implementing existing work in lajolla is a great idea, since it will teach you a lot about what has been done and what are their problems.
 Below we provide some options for you to think about, but feel free to come up with your own ones.
 
 \paragraph{Grading.} 
@@ -21,15 +22,14 @@ For the final project, you can either do it alone or form a group of two people.
 For the research type projects, to avoid conflicts, if multiple groups want to work on the same project, we will consider merging the groups. 
 
 \paragraph{Logistics.}
-Before 2/26, please let us know what you plan to do for the final project by submitting a 1-2 pages brief report to Canvas.
+Before 2/27, please let us know what you plan to do for the final project by submitting a 1-2 pages brief report to Canvas.
 Schedule a chat with us if you have any question. 
-We will have a checkpoint at 3/11: send us a brief progress report in a few pages on Canvas (ideally provide results and images) describing what you did and what you plan to do next.
+We will have a checkpoint at 3/9: send us a brief progress report in a few pages on Canvas (ideally provide results and images) describing what you did and what you plan to do next.
 
 \section{Implementation ideas}
 
-Following are projects that are less novel, but could produce cool images. 
-They are usually about the implementation of the papers we talked about in the class.
-I did not sort them in terms of difficulty.
+Following are projects that implement papers we talked about in the class (some of them are from previous classes). As mentioned, starting from implementing existing work is a great idea for research, since you will know the problems of existing approaches much better.
+I did not sort the projects in terms of difficulty. It is possible that you can combine multiple of below.
 
 \paragraph{Energy-preserving microfacet BSDFs.} 
 Implement Heitz et al.'s multiple-scattering microfacet BSDF~\cite{Heitz:2016:MMB} in lajolla.
@@ -43,7 +43,12 @@ When does it work well and when does it fail?
 As a bonus, implement LEADR~\cite{Dupuy:2013:LEA} for filtering displacement map.
 First you will need to implement displacement mapping in lajolla.
 This can be done in a preprocessing pass to convert meshes with displacement map textures into tesselated mesh, or in an on-the-fly manner~\cite{Thonat:2021:TDM}.
-Alternatively, implement Yan et al.'s normal map filtering technique~\cite{Yan:2014:RGH} in lajolla. 
+
+\paragraph{Glints rendering}
+Implement Yan et al.'s normal map filtering technique~\cite{Yan:2014:RGH} or Jakob's discrete stochastic microfacet models~\cite{https://rgl.epfl.ch/publications/Jakob2014Discrete} in lajolla. 
+
+\paragraph{Tesselation-free displacement mapping.}
+Implement an on-the-fly tesselation-free displacement mapping~\cite{Thonat:2021:TDM,Hoetzlein:2025:PDM} in lajolla.
 
 \paragraph{Layered BSDF.}
 Implement the position-free layered BSDF simulator from Guo et al.~\cite{Guo:2018:PMC} in lajolla.
@@ -58,7 +63,6 @@ You may want to read Matt Pharr's \href{https://www.pbrt.org/hair.pdf}{note} on 
 
 \paragraph{Thin-film iridescence BSDF.}
 Implement Belcour's thin-film iridescence BSDF~\cite{Belcour:2017:PEM} in lajolla.
-Feel free to look at Belcour's source code.
 
 \paragraph{Faster null-scattering using space partitioning.}
 Implement Yue et al.'s kd-tree data structure~\cite{Yue:2010:UAS} or uniform grid~\cite{Yue:2011:TOS} for better upper bound of the extinction coefficients. As a bonus, implement progressive null tracking~\cite{Misso:2023:PNT}. 
@@ -67,13 +71,16 @@ Implement Yue et al.'s kd-tree data structure~\cite{Yue:2010:UAS} or uniform gri
 Add emissive volumes to your Homework 2 code. You might want to read Pixar's volume sampling paper from Villemin and Hery~\cite{Villemin:2013:PIF}.
 
 \paragraph{Efficient transmittance estimation.}
-Implement Kettunen et al.'s unbiased ray marching estimator~\cite{Kettunen:2021:URT}.
+Implement Kettunen et al.'s unbiased ray marching estimator~\cite{Kettunen:2021:URT} or Peters' biased Jackknife estimator~\cite{Peters:2025:JTM}.
 You can extend your volumetric path tracer in homework 2 for this.
 Replace your ratio tracker with the new ray marching estimator.
 Compare to the ratio tracker and analyze their variance reduction properties.
 
 \paragraph{SGGX.}
 Implement the SGGX microflake phase function~\cite{Heitz:2015:SMD} in lajolla. Use it for rendering something like anisotropic volume appearance or level of details.
+
+\paragraph{GPIS.}
+Implement Seyb's Gaussian process model for rendering stochastic geometry~\cite{Seyb:2024:MPM} (or the ``practical'' version from Xu~\cite{Xu:2025:PGP}, not sure which one is easier) in lajolla.
 
 \paragraph{BSSRDF.}
 Implement a BSSRDF in lajolla.
@@ -110,9 +117,12 @@ You can also implement the probabilistic variant from Knaus et al.~\cite{Knaus:2
 Implement gradient-domain path tracing~\cite{Kettunen:2015:GPT} in lajolla.
 A good reference code is \href{https://gist.github.com/BachiLi/4f5c6e5a4fef5773dab1}{smallgdpt} written by me.
 
+\paragraph{Vector-valued ratio control variates}
+Implement Lu et al.'s ratio control variates~\cite{Lu:2025:VMC} in lajolla. You can apply it to either BSDF sampling, light sampling, or participating media sampling.
+
 \paragraph{Metropolis light transport.} Implement Kelemen-style Metropolis light transport~\cite{Kelemen:2002:SRM} in lajolla. Read the relevant \href{https://www.pbr-book.org/3ed-2018/Light_Transport_III_Bidirectional_Methods/Metropolis_Light_Transport}{chapters} in pbrt. Another good reference code is \href{https://cs.uwaterloo.ca/~thachisu/smallpssmlt.cpp}{smallpssmlt} and \href{https://cs.uwaterloo.ca/~thachisu/smallmmlt.cpp}{smallmmlt} from Toshiya Hachisuka.
 
-\paragraph{Manifold exploration.} Implement Zeltner's specular manifold sampling~\cite{Zeltner:2020:SMS} in lajolla. Start with a basic LSDE path with reflective objects (instead of refraction).
+\paragraph{Manifold exploration.} Implement Zeltner's specular manifold sampling~\cite{Zeltner:2020:SMS} or Fan's specular polynomial~\cite{Fan:2024:SP} in lajolla. Start with a basic LSDE path with reflective objects (instead of refraction).
 
 \paragraph{Optimal multiple importance sampling.}
 Implement \emph{optimal} multiple importance sampling using control variates from Kondapaneni et al.~\cite{Kondapaneni:2019:OMI} in lajolla.
@@ -126,15 +136,32 @@ As a bonus, implement the data-driven version from Wang et al.~\cite{Wang:2021:L
 Implement ReSTIR~\cite{Bitterli:2020:SRR} in lajolla for rendering scenes with many lights or even ReSTIR PT~\cite{Lin:2022:GRI}.
 You don't need to implement the temporal reuse, but you should explore spatial reuse.
 
+\paragraph{Stylized path tracing.}
+Implement West's stylized path tracing algorithm~\cite{West:2024:SRF} for non-photorealistic rendering. 
+
+\paragraph{Glow discharge.}
+Implement Sivaram's Glow Discharge paper~\cite{Edavamadathil:2025:MRG}.
+
+\paragraph{Gaussian surfels differentiable radiosity.}
+Implement Jiang's differentiable radiosity work~\cite{Jiang:2025:DLT}.
+
+\paragraph{Gaussian integral operator.}
+Implement Lu's Gaussian integral operator for precomputed radiance transfer~\cite{Lu:2025:GIL}.
+
+\paragraph{Bilateral gradient filtering.}
+Implement Chang-Yang-Belhe's gradiant filtering algorithm for inverse rendering~\cite{Chang:2024:SBG}. You can try it on a simple texture recovery task.
+
+\paragraph{Residual path rendering.}
+Implement Xu's residual path rendering algorithm~\cite{Xu:2024:RPI}. Implementing a subset of the sampling techniques is sufficient.
+
 \paragraph{GPU rendering.}
 Port most of lajolla to Vulkan/DirectX 12/CUDA/OpenCL/Metal/Slang.
 
 \paragraph{Build a game in Unreal Engine 5!}
-Discuss what rendering technology you used in the game and why you used them.
+Focus on the rendering technology. Analyze the technology you used in the game and why you used them. Compared to alternatives.
 
 \section{Research project ideas}
 These projects are likely publishable in a conference or a journal if done well (you will likely need to work on it longer even after the course ends for this to happen though).
-They are for students who are more motivated and want to get into rendering research.
 If you choose to work on these projects, it is possible that they will not be finished at the end of the quarter. This is totally fine and you will still get high/full points if you show your work.
 We are happy to work with you after the quarter to finish the project if you did well and are interested (and if we have the capacity).
 
@@ -155,6 +182,18 @@ Same as above, you can either implement this in \href{https://github.com/mitsuba
 \paragraph{Theoretical analysis of warped-area sampling.}
 While we have a sketch of correctness analysis in the warped-area sampling papers~\cite{Bangaru:2020:UWS,Bangaru:2022:DRN,Xu:2023:PSDR-WAS}, the theoretical properties of the velocity field interpolation are not very well-understood. What is the optimal interpolation? When will the integral diverge? If you choose to work on this, you likely don't need to write much code (other than to verify your intuition) and it's mostly about writing down the formalism.
 
+\paragraph{Crofton formula for edge sampling.}
+\href{https://en.wikipedia.org/wiki/Crofton_formula}{Crofton formula} relates an integral over a curve to an integral over all lines that intersect with the curve. Thus we can use it for designing algorithms to sample points on the curve, which makes it very suitable for an edge sampling algorithm. We explored a (biased but consistent) version of this type of algorithm in our recent work~\cite{Belhe:2025:ASD}, but did not apply it to path tracing tasks. Can we use similar algorithms for edge sampling and how would it fair against alternatives like projective sampling?
+
+\paragraph{Variance analysis and combination of attached/detached samplers in differentiable rendering.}
+Zeltner~\cite{Zeltner:2021:MCE} showed that to importance sample the derivative of an integral, we can either first apply the differentiation, then do the importance sampling (they call it ``detached'' sampling). Or we can first apply the importance sampling, then do the differentiation (they call it ``attached'' sampling). The paper didn't answer the question of when is one better than the other: can we theoretically analyze the variance of the two estimators? Can we combine the two estimators, similar to multiple importance sampling, so that the better one is used whenever we need them? For this project, you do not need to implement the esimators inside a renderer. Analyzing them in some synthetic functions you want to integrate and differentiate should be good enough.
+
+\paragraph{Differentiable Gaussian process stochastic geometry light transport.}
+Can we make the Gaussian process stochastic geometry light transport models~\cite{Seyb:2024:MPM,Xu:2025:PGP} directly differentiable? How do we use it for inverse rendering?
+
+\paragraph{Better or generalized gradient filtering.}
+In our recent work~\cite{Chang:2024:SBG} we show that a simple cross-bilateral filter over the gradients can significantly improve the inverse recovery of textures, volumes, and meshes. Can we design other filters that work better? (For example, how about a non-local means filter? How about guided image filter?) Can we design filters that work for other modalities, such as point clouds, Gaussian splats, or even neural networks?
+
 \paragraph{Guided tri-directional path tracing.}
 From Veach's path-space formulation, it is clear that in addition to tracing rays starting from eyes or lights, it should also be possible to trace rays starting from an arbitrary point in the scene (we explored a similar method in 2017~\cite{Anderson:2017:AED}). 
 However, such \emph{tri}-directional path tracing method is difficult to apply in practice since it is difficult to decide where should we start tracing the ray. 
@@ -165,6 +204,9 @@ Similar methods have been applied to differentiable rendering (e.g.,~\cite{Yan:2
 For the scope of the final project, it is not necessary to combine your method with the camera and light subpaths.
 Ultimately, it would be super cool to combine the tri-directional path tracer with VCM/UPS and use data to decide with subpath to use~\cite{Grittmann:2022:EMI}.
 
+\paragraph{Improved residual path rendering for animation.}
+Our recent residual path rendering paper~\cite{Xu:2024:RPI} shows that it is possible to directly compute the difference of two frames using control variates and derive importance sampling algorithms to avoid sampling paths where things have not changed between frames. The paper only shows applications to re-rendering: what would be the practical concerns when we apply the method to animation? The ``path mapping'' we used in the paper also only works for affine transformation of the animated object. Can we derive the path mapping for general deformation?
+
 \paragraph{Motion-aware path guiding for animation rendering.}
 Path guiding algorithms build data structures that record contributions of light paths and use them for importance sampling.
 These data structures typically are fitted in a per-frame basis and do not easily extend to animation rendering. 
@@ -173,11 +215,14 @@ A potential point of reference is the neural radiance caching work from Muller e
 A relatively simple starting point is to implement a simple exponential weighted moving average update for the 5D tree data structure of Muller et al.~\cite{Muller:2017:PPG}.
 Can you come up with heuristics to account for occlusion and parallax? What kind of information we can extract from a renderer that can help updating the data structure?
 
+\paragraph{Analytical precomputed rendering.}
+Our recent work uses Gaussians to fit an integral operator that results~\cite{Lu:2025:GIL} in analytical solutions that can be used for precomputed rendering. Are there other functions that have similar properties (e.g., polynomials or spherical Gaussians), and can we use them for similar tasks? Can we collect a class of functions and choose the best subsets for our tasks during fitting? In particular, infinite support Gaussians can have issues when dealing with finite domain boundaries which introduce discontinuities.
+
 \paragraph{Jointly-learned path guiding and denoising.}
 Current rendering denoisers are usually trained separately from the rendering algorithms (in particular, they are usually trained using a standard path tracer). Can we train the denoiser with the sampling algorithm together to make them compensate for each other? You might want to read Bako's Offline Deep Importance Sampling~\cite{Bako:ODI:2019}.
 
 \paragraph{Learned multiple importance sampling.}
-While optimal multiple importance sampling~\cite{Kondapaneni:2019:OMI} is shown to be optimal variance-wise, it has a few drawbacks: 1) it is computationally expensive, 2) it is only optimal under linear combination of existing contributions, and 3) it is only optimal for unbiased rendering -- it does not optimize for the Mean Square Error (bias squared plus variance). Therefore, it is tempting to simply learn to do multiple importance sampling. Take a few features as input (e.g., PDFs, roughness, curvature, ambient occlusion), train a parametric function (does not need to be a neural network) to combine your rendering samples. For this project, you don't need to implement in a renderer to start, you can just try it on some test functions.
+While optimal multiple importance sampling~\cite{Kondapaneni:2019:OMI} is shown to be optimal variance-wise, it has a few drawbacks: 1) it is computationally expensive, 2) it is only optimal under linear combination of existing contributions, and 3) it is only optimal for unbiased rendering -- it does not optimize for the Mean Square Error (bias squared plus variance). Therefore, it is tempting to simply learn to do multiple importance sampling. Take a few features as input (e.g., PDFs, roughness, curvature, ambient occlusion), train a parametric function (does not need to be a neural network) to combine your rendering samples. For this project, you don't need to implement it in a renderer to start, you can just try it on some test functions.
 
 \paragraph{Neural mutation for Metropolis light transport.}
 Neural networks have been shown to be helpful for importance sampling in a Monte Carlo path tracer~\cite{Muller:2019:NIS}.
@@ -208,6 +253,12 @@ The network architecture can be a 7D coordinate network that takes a 3D position
 For importance sampling, it might be useful to make the network a normalizing flow~\cite{Muller:2019:NIS} conditioned on the position and incoming direction. Similar to above, I would recommend starting from known lighting (e.g., an environment map) and direct lighting to make the problem easier.
 I would also recommend to implement this in \href{https://developer.nvidia.com/blog/differentiable-slang-example-applications/}{Slang} to leverage its automatic differentiation feature and GPU backends.
 
+\paragraph{HotSpot for inverse rendering.}
+Our recent work proposed a loss based on heat transfer to optimize neural signed distance fields~\cite{Wang:2025:HSD}. In the paper we only show results on fitting the geometry to a point cloud. Can we do the same thing using a rendering loss~\cite{Bangaru:2022:DRN}? Will this work better than the alternatives such as the eikonal loss?
+
+\paragraph{Animated BRDFs and phase functions.}
+How would BRDFs and phase functions change over time~\cite{Sun:2007:TVB}? For example, when we deform a surface, how would the microfacet statistics on the surface change~\cite{Atanasov:2022:MT}? If we have a fluid simulator of smoke, can we also simulate how the phase function of smoke changes over time? What is the underlying physics? A potential starting point is to use the data collected by Sun et al.~\cite{Sun:2007:TVB} and fit a physical model to the data. You can also simply propose your own model and we can worry about fitting later.
+
 \paragraph{Transmittance evaluation for NeRF training and inference.}
 In Neural Radiance Fields, the transmittance is typically evaluated using ray marching. This is different from the ones we did in Homework 2 (e.g., ratio tracking). Implement advanced unbiased transmittance evaluation schemes (e.g., Keuttnen et al.'s unbiased ray marcher~\cite{Kettunen:2021:URT}), and compare with standard NeRF ray marching (in terms of both quality and speed). For training (i.e., derivative evaluation), you might want to implement Nimier-David et al.'s differential tracking~\cite{Nimier-David:2022:UIV}.
 As usual, I would also recommend to implement this in \href{https://developer.nvidia.com/blog/differentiable-slang-example-applications/}{Slang} to leverage its automatic differentiation feature and GPU backends.
@@ -216,7 +267,7 @@ As usual, I would also recommend to implement this in \href{https://developer.nv
 Sawhney et al.~\cite{Sawhney:2020:MCG} recently discussed a type of PDE solver that has very similar computational patterns with rendering. Can you think of a way to make it faster by applying techniques we learned in the course? For example, would something like Metropolis light transport help?
 
 \paragraph{Non-photorealistic rendering.}
-The course so far focuses mostly on physics-inspired models. However, there is a huge space for exploration of non-physical models. How do we define the models? How do we combine with existing renderers? Read my CSE 167 \href{https://cseweb.ucsd.edu/~tzli/cse167/fa2023/lectures/17_nonphotorealistic_rendering.pdf}{slides} and our \href{https://people.csail.mit.edu/kach/dpp-dpp/}{inverse inverse rendering paper} for inspirations.
+The course so far focuses mostly on physics-inspired models. However, there is a huge space for exploration of non-physical models. How do we define the models? How do we combine with existing renderers? Read my CSE 167 \href{https://cseweb.ucsd.edu/~tzli/cse167/fa2025/lectures/17_nonphotorealistic_rendering.pdf}{slides} and our \href{https://people.csail.mit.edu/kach/dpp-dpp/}{inverse inverse rendering paper} for inspirations.
 
 \paragraph{Faster vector graphics rendering.}
 There are mainly two ways to render vector graphics currently. One is more like ray tracing~\cite{Ganacim:2014:MVG} where we shoot a ray from the pixel sample to see how many intersections it makes with the curves. One is more akin to rasterization~\cite{Kilgard:2012:GPR} where we convert the curves to triangle meshes and apply implicitization to determine whether the point is inside the shape or not. It is unclear which one is faster, or what even is the space of possible design for vector graphics rendering. Do a survey of the algorithms in this space, implement some combination of them, and ideally come up with a fast algorithm for vector graphics rendering. I find Raph Levien's \href{https://raphlinus.github.io/rust/graphics/gpu/2020/06/13/fast-2d-rendering.html}{blog post} to be very helpful.
@@ -224,8 +275,17 @@ There are mainly two ways to render vector graphics currently. One is more like 
 \paragraph{Megakernel vs Wavefront.}
 Laine et al. studied two styles of ray tracing on GPU back in 2013~\cite{Laine:2013:MCH}: megakernel style and wavefront style. They concluded that for complex, production material shaders, wavefront rendering is faster because of better memory locality. However, they didn't have hardware ray tracing back then and the hardware architecture is very different now. Is the conclusion still true today? Study different ways to implement path tracing on GPUs and compare their speed on modern GPU architectures.
 
-\paragraph{Multiple-scattering LEAN or LEADR}
+\paragraph{Fast ray tracing for Neural Geometry Fields.}
+Our recent work on Neural Geometry Fields~\cite{Edavamadathil:2024:NGF} proposed a data structure for storing geometric displacement using neural networks. However, we only explored rasterization for NGF rendering in the paper. How do we efficiently render a NGF with on-the-fly without tesselation~\cite{Thonat:2021:TDM}? Would the best rendering algorithm be different from the existing ones for displacement mapping?
+
+\paragraph{Multiple-scattering LEAN or LEADR.}
 The normal/displacement map filtering methods LEADN/LEADR~\cite{Olano:2010:LM,Dupuy:2013:LEA} convert normal map filtering to a microfacet NDF fitting problem. However, the microfacet models they are using do not consider multiple scattering between the microfacets. It seems that it would be straightforward to apply the recent advances in multiple-scattering microfacet BSDFs to these methods. Would adding multiple-scattering into LEADN/LEADR improve the visual appearance? Do we need a different multiple-scattering model or microfacet configuration?
+
+\paragraph{Abusing RT cores.}
+RT cores have been recently used for non-ray-tracing tasks such as nearest neighbor search~\cite{Zhu:2022:RAN}, database query~\cite{Shi:2024:RBD}, and clustering~\cite{Nagarajan:2023:RAD}. Can you think of other applications of RT cores that are not exactly ray tracing? A few random ideas: Generalized Winding Number calculation~\cite{Barill:2018:FWN}, fast smoothed distance computation~\cite{Madan:2022:FES}, and attention mechanism.
+
+\paragraph{Fixed-point or float16 rendering.}
+Rendering is typically done in floating point. What if we do it using fixed-point? (Certain mobile hardware may require so.) What if we do it using lower precision like float16 or even float8? (Modern GPUs now support float16 or float8 computation.) Do we need to change anything in the rendering pipelines to accomodate? Do we need adaptive precision?
 
 \bibliographystyle{plain}
 \bibliography{refs}
