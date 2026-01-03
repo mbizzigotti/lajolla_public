@@ -182,7 +182,7 @@ Doppler time-of-flight imaging~\cite{Heide:2015:DTI} is an imaging device that u
 Refractive radiative transfer equation~\cite{Pediredla:2020:PTE} describes a light transport scenario where the rays can ``curve'' due to the continuous change of index of refraction of the medium. Efficient path tracing solvers have been proposed by Pediredla, but we do not know yet how to efficiently compute the derivatives of refractive radiative transfer equation solvers. How do we save the memory akin the path replay backpropagation, how do we reduce the variance, and how do we resolve discontinuities?
 
 \paragraph{Differentiable cone-based physical light transport for wave optics}
-Steinberg~\cite{Steinberg:2025:WTG} recently proposed a wave optics simulator based on cone tracing (instead of ray tracing) that has similar structure to a (bidirectional) path tracer. Can we make their model differentiable? What are the computational challenges? What are the applications?
+Steinberg~\cite{Steinberg:2025:WTG} recently proposed a wave optics simulator based on cone tracing of Gaussian beams (instead of ray tracing) that has similar structure to a (bidirectional) path tracer. Can we make their model differentiable? What are the computational challenges? What are the applications?
 
 \paragraph{Theoretical analysis of warped-area sampling.}
 While we have a sketch of correctness analysis in the warped-area sampling papers~\cite{Bangaru:2020:UWS,Bangaru:2022:DRN,Xu:2023:PSDR-WAS}, the theoretical properties of the velocity field interpolation are not very well-understood. What is the optimal interpolation? When will the integral diverge? If you choose to work on this, you likely don't need to write much code (other than to verify your intuition) and it's mostly about writing down the formalism.
@@ -240,6 +240,9 @@ We can investigate the use of neural networks for designing mutation in a Metrop
 A relatively simple starting point is to implement Levy et al.'s method in a Kelemen-style path tracer and see how well it works. 
 The topic is also broadly related to diffusion models.
 
+\paragraph{Continuous gradient domain rendering.}
+Gradient domain rendering~\cite{Kettunen:2015:GPT} typically estimate difference between pixel colors as correlated sampling to reduce variance. This can be seen as estimating finite difference gradients. Can we instead use the continuous screen space gradients instead of the finite differences for the reconstruction? Mitchell discussed some version of this derivative reconstruction theory~\cite{Mitchell:1988:RFC} back in 1988, but did not propose a practical rendering algorithm. 
+
 \paragraph{Learning to build BVHs.}
 Current Bounding Volume Hierarchy constructions are usually based on heuristics (in particular, surface area heuristics). Can we find a better metric through data-driven methods? Find a better BVH construction by training the construction algorithm and its parameters for many scenes to minimize the ray tracing time. You may want to read Aila et al.'s study on surface area heuristics~\cite{Aila:2013:QMB}.
 
@@ -287,7 +290,7 @@ Laine et al. studied two styles of ray tracing on GPU back in 2013~\cite{Laine:2
 Our recent work on Neural Geometry Fields~\cite{Edavamadathil:2024:NGF} proposed a data structure for storing geometric displacement using neural networks. However, we only explored rasterization for NGF rendering in the paper. How do we efficiently ray trace a NGF on-the-fly without tesselation~\cite{Thonat:2021:TDM}? Would the best rendering algorithm be different from the existing ones for displacement mapping?
 
 \paragraph{Multiple-scattering LEAN or LEADR.}
-The normal/displacement map filtering methods LEADN/LEADR~\cite{Olano:2010:LM,Dupuy:2013:LEA} convert normal map filtering to a microfacet NDF fitting problem. However, the microfacet models they are using do not consider multiple scattering between the microfacets. It seems that it would be straightforward to apply the recent advances in multiple-scattering microfacet BSDFs to these methods. Would adding multiple-scattering into LEADN/LEADR improve the visual appearance? Do we need a different multiple-scattering model or microfacet configuration?
+The normal/displacement map filtering methods LEAN/LEADR~\cite{Olano:2010:LM,Dupuy:2013:LEA} convert normal map filtering to a microfacet NDF fitting problem. However, the microfacet models they are using do not consider multiple scattering between the microfacets. It seems that it would be straightforward to apply the recent advances in multiple-scattering microfacet BSDFs to these methods. Would adding multiple-scattering into LEADN/LEADR improve the visual appearance? Do we need a different multiple-scattering model or microfacet configuration?
 
 \paragraph{Abusing RT cores.}
 RT cores have been recently used for non-ray-tracing tasks such as nearest neighbor search~\cite{Zhu:2022:RAN}, database query~\cite{Shi:2024:RBD}, and clustering~\cite{Nagarajan:2023:RAD}. Can you think of other applications of RT cores that are not exactly ray tracing? A few random ideas: generalized winding number calculation~\cite{Barill:2018:FWN}, fast smoothed distance computation~\cite{Madan:2022:FES}, 2D vector graphics rendering, and attention mechanism.
