@@ -158,7 +158,7 @@ Implement Xu's residual path rendering algorithm~\cite{Xu:2024:RPI}. Implementin
 Port most of lajolla to Vulkan/DirectX 12/CUDA/OpenCL/Metal/Slang.
 
 \paragraph{Build a game in Unreal Engine 5!}
-Focus on the rendering technology. Analyze the technology you used in the game and why you used them. Compared to alternatives.
+Focus on the rendering technology. Analyze the technology you used in the game and why you used them. Compare to alternatives.
 
 \section{Research project ideas}
 These projects are likely publishable in a conference or a journal if done well (you will likely need to work on it longer even after the course ends for this to happen though).
@@ -168,22 +168,27 @@ We are happy to work with you after the quarter to finish the project if you did
 For anything below, feel free to reach out to us for clarification about details of the project.
 I did not sort them in terms of difficulty.
 
-\paragraph{Differentiable hair rendering.}
-Existing inverse hair rendering methods (e.g.,~\cite{Rosu:2022:NSL}) do not consider the light scattering in the hair fiber, and this can lead to less realistic results.
-In this project, we will develop a differentiable renderer~\cite{Li:2018:DMC} that is capable of computing the derivatives of a rendering of hair with respect to the shading and geometry parameters, and use it for inferring hair reflectance and geometry from images.
-You can either implement this in \href{https://github.com/mitsuba-renderer/mitsuba3}{Mitsuba 3} or \href{https://developer.nvidia.com/blog/differentiable-slang-example-applications/}{Slang} to leverage their automatic differentiation feature and GPU backends.
-For the scope of the final project, it is sufficient to only consider the hair BSDF parameters and ignore the curve geometry.
-To handle the geometry derivatives, you can likely adapt Bangaru et al.'s differentiable signed distance field rendering algorithm~\cite{Bangaru:2022:DRN} (since the computation of ray-curve intersection relies on the distance between the ray and the curve).
-
 \paragraph{Differentiable curved surfaces rendering.}
 Most of the discontinuity handling methods in differentiable rendering currently focuses on triangle meshes and signed distance fields. In Computer Aided Design, parametric surfaces such as NURBS or Beizer patches are often used (see Bartosz Ciechanowski's \href{https://ciechanow.ski/curves-and-surfaces/}{blog post} for an excellent introduction). Can you design a method to handle the discontinuity when differentiating curved surface rendering? Note that existing work handled this by first converting the geometry to triangle meshes~\cite{Worchel:2023:DRP}, and we are aiming for an exact method without the conversion. You may find the technique of \href{https://web.mit.edu/hyperbook/Patrikalakis-Maekawa-Cho/node68.html}{``implicitization''} useful -- it converts a polynomial parametric surface into an implicit surface, you can then apply our differentiable SDF rendering technique~\cite{Bangaru:2022:DRN}.
 Same as above, you can either implement this in \href{https://github.com/mitsuba-renderer/mitsuba3}{Mitsuba 3} or \href{https://developer.nvidia.com/blog/differentiable-slang-example-applications/}{Slang} to leverage their automatic differentiation feature and GPU backends.
+
+\paragraph{Differentiable stylized rendering.}
+Can we make the stylized path tracing algorithm from West~\cite{West:2024:SRF} differentiable and learn the stylization function from data or loss functions? What would be the computational challenge of computing the derivatives, how do we parameterize the stylization functions, and how do we collect data or setup loss functions?
+
+\paragraph{Differentiable Doppler time-of-flight rendering}
+Doppler time-of-flight imaging~\cite{Heide:2015:DTI} is an imaging device that uses the velocity of the objects in motion to capture highly detailed motion. The simulation of the device: Doppler time-of-flight rendering~\cite{Kim:2023:DTR} has been developed recently. Can we differentiate the simulation for better reconstruction of the 3D scene in motion? As shown by Kim~\cite{Kim:2023:DTR}, there are likely many interesting computational challenges that will show up when we differentiate with the system. In particular the variance of the derivative estimator will likely be very high.
+
+\paragraph{Differentiable refractive radiative transfer equation solver}
+Refractive radiative transfer equation~\cite{Pediredla:2020:PTE} describes a light transport scenario where the rays can ``curve'' due to the continuous change of index of refraction of the medium. Efficient path tracing solvers have been proposed by Pediredla, but we do not know yet how to efficiently compute the derivatives of refractive radiative transfer equation solvers. How do we save the memory akin the path replay backpropagation, how do we reduce the variance, and how do we resolve discontinuities?
+
+\paragraph{Differentiable cone-based physical light transport for wave optics}
+Steinberg~\cite{Steinberg:2025:WTG} recently proposed a wave optics simulator based on cone tracing (instead of ray tracing) that has similar structure to a (bidirectional) path tracer. Can we make their model differentiable? What are the computational challenges? What are the applications?
 
 \paragraph{Theoretical analysis of warped-area sampling.}
 While we have a sketch of correctness analysis in the warped-area sampling papers~\cite{Bangaru:2020:UWS,Bangaru:2022:DRN,Xu:2023:PSDR-WAS}, the theoretical properties of the velocity field interpolation are not very well-understood. What is the optimal interpolation? When will the integral diverge? If you choose to work on this, you likely don't need to write much code (other than to verify your intuition) and it's mostly about writing down the formalism.
 
 \paragraph{Crofton formula for edge sampling.}
-\href{https://en.wikipedia.org/wiki/Crofton_formula}{Crofton formula} relates an integral over a curve to an integral over all lines that intersect with the curve. Thus we can use it for designing algorithms to sample points on the curve, which makes it very suitable for an edge sampling algorithm. We explored a (biased but consistent) version of this type of algorithm in our recent work~\cite{Belhe:2025:ASD}, but did not apply it to path tracing tasks. Can we use similar algorithms for edge sampling and how would it fair against alternatives like projective sampling?
+\href{https://en.wikipedia.org/wiki/Crofton_formula}{Crofton formula} from integral geometry relates an integral over a curve to an integral over all lines that intersect with the curve. Thus we can use it for designing algorithms to sample points on the curve, which makes it very suitable for an edge sampling algorithm. We explored a (biased but consistent) version of this type of algorithms in our recent work~\cite{Belhe:2025:ASD}, but did not apply it to path tracing problems. Can we use similar algorithms for edge sampling and how would it fair against alternatives like projective sampling?
 
 \paragraph{Variance analysis and combination of attached/detached samplers in differentiable rendering.}
 Zeltner~\cite{Zeltner:2021:MCE} showed that to importance sample the derivative of an integral, we can either first apply the differentiation, then do the importance sampling (they call it ``detached'' sampling). Or we can first apply the importance sampling, then do the differentiation (they call it ``attached'' sampling). The paper didn't answer the question of when is one better than the other: can we theoretically analyze the variance of the two estimators? Can we combine the two estimators, similar to multiple importance sampling, so that the better one is used whenever we need them? For this project, you do not need to implement the esimators inside a renderer. Analyzing them in some synthetic functions you want to integrate and differentiate should be good enough.
@@ -191,13 +196,16 @@ Zeltner~\cite{Zeltner:2021:MCE} showed that to importance sample the derivative 
 \paragraph{Differentiable Gaussian process stochastic geometry light transport.}
 Can we make the Gaussian process stochastic geometry light transport models~\cite{Seyb:2024:MPM,Xu:2025:PGP} directly differentiable? How do we use it for inverse rendering?
 
-\paragraph{Better or generalized gradient filtering.}
-In our recent work~\cite{Chang:2024:SBG} we show that a simple cross-bilateral filter over the gradients can significantly improve the inverse recovery of textures, volumes, and meshes. Can we design other filters that work better? (For example, how about a non-local means filter? How about guided image filter?) Can we design filters that work for other modalities, such as point clouds, Gaussian splats, or even neural networks?
+\paragraph{Stochastic geometry beyond Gaussian processes.}
+Seyb used Gaussian processes~\cite{Seyb:2024:MPM} to model stochastic geometry, but there could be other choices such as Student-t processes or Levy processes. What are the difference in the appearance between these processes and when should we choose these? (This idea was partly suggested by ChatGPT.)
+
+\paragraph{Better/generalized gradient filtering.}
+In our recent work~\cite{Chang:2024:SBG} we show that a simple cross-bilateral filter over the gradients can significantly improve the inverse recovery of textures, volumes, and meshes. Can we design other filters that work better? (For example, how about a non-local means filter? How about guided image filter?) Can we design filters that work for other modalities, such as point clouds, Gaussian splats, SVBRDFs, or even neural networks?
 
 \paragraph{Guided tri-directional path tracing.}
 From Veach's path-space formulation, it is clear that in addition to tracing rays starting from eyes or lights, it should also be possible to trace rays starting from an arbitrary point in the scene (we explored a similar method in 2017~\cite{Anderson:2017:AED}). 
 However, such \emph{tri}-directional path tracing method is difficult to apply in practice since it is difficult to decide where should we start tracing the ray. 
-In this project, we will design a path guiding algorithm~\cite{Lafortune:1995:5RV,Muller:2017:PPG} that builds a 5D data structure to decide which point and direction the path should start with.
+Can we design a path guiding algorithm~\cite{Lafortune:1995:5RV,Muller:2017:PPG} that builds a 5D data structure to decide which point and direction the path should start with.
 In the first phase, we will start tracing rays randomly, and record their contributions in the 5D data structure.
 We will then importance sample the recorded contribution and iteratively update the data structure.
 Similar methods have been applied to differentiable rendering (e.g.,~\cite{Yan:2022:EEB}), but it has not been applied in forward rendering algorithms yet.
@@ -216,7 +224,7 @@ A relatively simple starting point is to implement a simple exponential weighted
 Can you come up with heuristics to account for occlusion and parallax? What kind of information we can extract from a renderer that can help updating the data structure?
 
 \paragraph{Analytical precomputed rendering.}
-Our recent work uses Gaussians to fit an integral operator that results~\cite{Lu:2025:GIL} in analytical solutions that can be used for precomputed rendering. Are there other functions that have similar properties (e.g., polynomials or spherical Gaussians), and can we use them for similar tasks? Can we collect a class of functions and choose the best subsets for our tasks during fitting? In particular, infinite support Gaussians can have issues when dealing with finite domain boundaries which introduce discontinuities.
+Our recent work~\cite{Lu:2025:GIL} uses Gaussians to fit an integral operator that results in analytical solutions that can be used for precomputed rendering. Are there other functions that have similar properties (e.g., polynomials or spherical Gaussians), and can we use them for similar tasks? Can we collect a class of functions and choose the best subsets for our tasks during fitting? In particular, infinite support Gaussians can have issues when dealing with finite domain boundaries which introduce discontinuities.
 
 \paragraph{Jointly-learned path guiding and denoising.}
 Current rendering denoisers are usually trained separately from the rendering algorithms (in particular, they are usually trained using a standard path tracer). Can we train the denoiser with the sampling algorithm together to make them compensate for each other? You might want to read Bako's Offline Deep Importance Sampling~\cite{Bako:ODI:2019}.
@@ -243,7 +251,7 @@ To achieve this, we need a neural representation that can represent a spatially 
 We will also need a way to importance sample both the phase function and transmittance of this neural representation.
 Alternatively, we can also explore a voxel-based representation (which can have similar performance to a neural representation!~\cite{KeilYu:2021:PRF}) using the SGGX phase function~\cite{Heitz:2015:SMD} and spherical harmonics for the scattering coefficients.
 I would recommend starting from known lighting (e.g., an environment map) and single scattering to make the problem easier.
-I would also recommend to implement this in \href{https://developer.nvidia.com/blog/differentiable-slang-example-applications/}{Slang} to leverage its automatic differentiation feature and GPU backends.
+I would also recommend to implement this in \href{https://developer.nvidia.com/blog/differentiable-slang-example-applications/}{Slang} to use its automatic differentiation feature and GPU backends.
 
 \paragraph{Spatially varying neural BSDF for neural signed distance fields.}
 Another popular neural scene representation is neural signed distance fields~\cite{Bangaru:2022:DRN}.
@@ -251,7 +259,7 @@ However, similar to the situation of NeRF, existing neural signed distance field
 In this project, we will explore modeling a spatially varying BSDF for neural signed distance fields.
 The network architecture can be a 7D coordinate network that takes a 3D position and two 2D directions and outputs the BSDF response.
 For importance sampling, it might be useful to make the network a normalizing flow~\cite{Muller:2019:NIS} conditioned on the position and incoming direction. Similar to above, I would recommend starting from known lighting (e.g., an environment map) and direct lighting to make the problem easier.
-I would also recommend to implement this in \href{https://developer.nvidia.com/blog/differentiable-slang-example-applications/}{Slang} to leverage its automatic differentiation feature and GPU backends.
+I would also recommend to implement this in \href{https://developer.nvidia.com/blog/differentiable-slang-example-applications/}{Slang} to use its automatic differentiation feature and GPU backends.
 
 \paragraph{HotSpot for inverse rendering.}
 Our recent work proposed a loss based on heat transfer to optimize neural signed distance fields~\cite{Wang:2025:HSD}. In the paper we only show results on fitting the geometry to a point cloud. Can we do the same thing using a rendering loss~\cite{Bangaru:2022:DRN}? Will this work better than the alternatives such as the eikonal loss?
@@ -261,7 +269,7 @@ How would BRDFs and phase functions change over time~\cite{Sun:2007:TVB}? For ex
 
 \paragraph{Transmittance evaluation for NeRF training and inference.}
 In Neural Radiance Fields, the transmittance is typically evaluated using ray marching. This is different from the ones we did in Homework 2 (e.g., ratio tracking). Implement advanced unbiased transmittance evaluation schemes (e.g., Keuttnen et al.'s unbiased ray marcher~\cite{Kettunen:2021:URT}), and compare with standard NeRF ray marching (in terms of both quality and speed). For training (i.e., derivative evaluation), you might want to implement Nimier-David et al.'s differential tracking~\cite{Nimier-David:2022:UIV}.
-As usual, I would also recommend to implement this in \href{https://developer.nvidia.com/blog/differentiable-slang-example-applications/}{Slang} to leverage its automatic differentiation feature and GPU backends.
+As usual, I would also recommend to implement this in \href{https://developer.nvidia.com/blog/differentiable-slang-example-applications/}{Slang} to use its automatic differentiation feature and GPU backends.
 
 \paragraph{Faster Monte Carlo PDE solvers.}
 Sawhney et al.~\cite{Sawhney:2020:MCG} recently discussed a type of PDE solver that has very similar computational patterns with rendering. Can you think of a way to make it faster by applying techniques we learned in the course? For example, would something like Metropolis light transport help?
@@ -270,7 +278,7 @@ Sawhney et al.~\cite{Sawhney:2020:MCG} recently discussed a type of PDE solver t
 The course so far focuses mostly on physics-inspired models. However, there is a huge space for exploration of non-physical models. How do we define the models? How do we combine with existing renderers? Read my CSE 167 \href{https://cseweb.ucsd.edu/~tzli/cse167/fa2025/lectures/17_nonphotorealistic_rendering.pdf}{slides} and our \href{https://people.csail.mit.edu/kach/dpp-dpp/}{inverse inverse rendering paper} for inspirations.
 
 \paragraph{Faster vector graphics rendering.}
-There are mainly two ways to render vector graphics currently. One is more like ray tracing~\cite{Ganacim:2014:MVG} where we shoot a ray from the pixel sample to see how many intersections it makes with the curves. One is more akin to rasterization~\cite{Kilgard:2012:GPR} where we convert the curves to triangle meshes and apply implicitization to determine whether the point is inside the shape or not. It is unclear which one is faster, or what even is the space of possible design for vector graphics rendering. Do a survey of the algorithms in this space, implement some combination of them, and ideally come up with a fast algorithm for vector graphics rendering. I find Raph Levien's \href{https://raphlinus.github.io/rust/graphics/gpu/2020/06/13/fast-2d-rendering.html}{blog post} to be very helpful.
+There are mainly two ways to render vector graphics currently. One is more like ray tracing~\cite{Ganacim:2014:MVG} where we shoot a ray from the pixel sample to see how many intersections it makes with the curves. One is more akin to rasterization~\cite{Kilgard:2012:GPR} where we convert the curves to triangle meshes and apply implicitization to determine whether the point is inside the shape or not. It is unclear which one is faster, or what even is the space of possible design for vector graphics rendering. Do a survey of the algorithms in this space, implement some combination of them, and ideally come up with a fast algorithm for vector graphics rendering. I find Raph Levien's \href{https://raphlinus.github.io/rust/graphics/gpu/2020/06/13/fast-2d-rendering.html}{blog post} to be very helpful. Can we use RT cores to accelerate vector graphics rendering?
 
 \paragraph{Megakernel vs Wavefront.}
 Laine et al. studied two styles of ray tracing on GPU back in 2013~\cite{Laine:2013:MCH}: megakernel style and wavefront style. They concluded that for complex, production material shaders, wavefront rendering is faster because of better memory locality. However, they didn't have hardware ray tracing back then and the hardware architecture is very different now. Is the conclusion still true today? Study different ways to implement path tracing on GPUs and compare their speed on modern GPU architectures.
@@ -282,10 +290,16 @@ Our recent work on Neural Geometry Fields~\cite{Edavamadathil:2024:NGF} proposed
 The normal/displacement map filtering methods LEADN/LEADR~\cite{Olano:2010:LM,Dupuy:2013:LEA} convert normal map filtering to a microfacet NDF fitting problem. However, the microfacet models they are using do not consider multiple scattering between the microfacets. It seems that it would be straightforward to apply the recent advances in multiple-scattering microfacet BSDFs to these methods. Would adding multiple-scattering into LEADN/LEADR improve the visual appearance? Do we need a different multiple-scattering model or microfacet configuration?
 
 \paragraph{Abusing RT cores.}
-RT cores have been recently used for non-ray-tracing tasks such as nearest neighbor search~\cite{Zhu:2022:RAN}, database query~\cite{Shi:2024:RBD}, and clustering~\cite{Nagarajan:2023:RAD}. Can you think of other applications of RT cores that are not exactly ray tracing? A few random ideas: Generalized Winding Number calculation~\cite{Barill:2018:FWN}, fast smoothed distance computation~\cite{Madan:2022:FES}, and attention mechanism.
+RT cores have been recently used for non-ray-tracing tasks such as nearest neighbor search~\cite{Zhu:2022:RAN}, database query~\cite{Shi:2024:RBD}, and clustering~\cite{Nagarajan:2023:RAD}. Can you think of other applications of RT cores that are not exactly ray tracing? A few random ideas: generalized winding number calculation~\cite{Barill:2018:FWN}, fast smoothed distance computation~\cite{Madan:2022:FES}, 2D vector graphics rendering, and attention mechanism.
 
 \paragraph{Fixed-point or float16 rendering.}
-Rendering is typically done in floating point. What if we do it using fixed-point? (Certain mobile hardware may require so.) What if we do it using lower precision like float16 or even float8? (Modern GPUs now support float16 or float8 computation.) Do we need to change anything in the rendering pipelines to accomodate? Do we need adaptive precision?
+Rendering is typically done in 32-bit or 64-bit floating point. What if we do it using fixed-point? (Certain mobile hardware may require so.) What if we do it using lower precision like float16 or even float8? (Modern GPUs now support float16 or float8 computation.) Do we need to change anything in the rendering pipelines to accomodate? Do we need adaptive precision?
+
+\paragraph{Theorem provers for inverse rendering.}
+There exist theorem provers such as \href{https://en.wikipedia.org/wiki/Z3_Theorem_Prover}{Z3} or \href{https://dreal.github.io/}{dReal} that can relatively efficiently solve problems of Satisfiability Modulo Theories (a generalized version of the boolean satisfiability problem). Since SMT/satisfiability can be seen as an inverse problem (finding variables that will satisfy an equation), can we somehow use these tools for inverse rendering? To achieve this, we need to implement a renderer in either Z3 or dReal, and then use these tools to find unknown scene parameters that will render to target images. How effective are these tools and can we combine~\cite{Inala:2018:RCN} them with existing differentiable renderers?
+
+\paragraph{Relationship between differentiable rendering and reinforcement learning.}
+Dahm~\cite{Dahm:2017:LLT} has shown that there is a strong relationship between rendering equation and Bellman equation -- the fundamental equation in reinforcement learning: both equations are a recursive \href{https://en.wikipedia.org/wiki/Fredholm_integral_equation#Equation_of_the_second_kind}{Fredholm Integral Equation of the Second Kind}. To optimize the Bellman equation, we often have to compute its gradients, aka policy gradients. The computation of policy gradients is thus strongly related to the task of differentiable rendering. Can we borrow techniques from both fields and benefit each other? For example, can we take differentiable rendering algorithms and apply them in reinforcement learning? Or, can we take reinforcement learning algorithms and apply them for differentiable/inverse rendering?
 
 \bibliographystyle{plain}
 \bibliography{refs}
