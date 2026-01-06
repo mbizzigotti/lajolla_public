@@ -77,3 +77,6 @@ inline Real radians(const Real deg) {
 inline Real degrees(const Real rad) {
     return (Real(180) / c_PI) * rad;
 }
+
+#define P2(x) ((x)*(x))
+#define P5(x) ((x)*(x)*(x)*(x)*(x))
