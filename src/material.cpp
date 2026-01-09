@@ -10,6 +10,23 @@ inline Vector3 sample_cos_hemisphere(const Vector2 &rnd_param) {
     };
 }
 
+inline Vector3 sample_half_vector(Real alpha, const Vector2 &rnd_param) {
+    Real a2 = alpha * alpha;
+    Real cos_h_elevation = sqrt(
+        (Real(1) - pow(a2, Real(1) - rnd_param.x))
+    /   (Real(1) - a2));
+    Real h_azimuth = 2 * c_PI * rnd_param.y;
+    Real sin_h_azimuth = sin(h_azimuth);
+    Real cos_h_azimuth = cos(h_azimuth);
+    Real sin_h_elevation = sqrt(Real(1) - P2(cos_h_elevation));
+
+    return Vector3(
+        sin_h_elevation * cos_h_azimuth,
+        sin_h_elevation * sin_h_azimuth,
+        cos_h_elevation
+    );
+}
+
 struct eval_op {
     Spectrum operator()(const Lambertian &bsdf) const;
     Spectrum operator()(const RoughPlastic &bsdf) const;
