@@ -1,5 +1,20 @@
 #include "../microfacet.h"
 
+static Spectrum disney_sheen(
+    Frame    frame,
+    Spectrum base_color,
+    Real     sheen_tint,
+    Vector3  half_vector,
+    Vector3  dir_in,
+    Vector3  dir_out
+)
+{
+    Real L = luminance(base_color);
+    Spectrum C_tint = L > 0 ? base_color / L : make_const_spectrum(1);
+    Spectrum C = (Real(1) - sheen_tint) + sheen_tint * C_tint;
+    return C * P5(Real(1) - abs(dot(half_vector, dir_out))) * abs(dot(frame.n, dir_out));
+}
+
 Spectrum eval_op::operator()(const DisneySheen &bsdf) const {
     if (dot(vertex.geometric_normal, dir_in) < 0 ||
             dot(vertex.geometric_normal, dir_out) < 0) {
@@ -14,12 +29,8 @@ Spectrum eval_op::operator()(const DisneySheen &bsdf) const {
 
     Spectrum base_color = eval(bsdf.base_color, vertex.uv, vertex.uv_screen_size, texture_pool);
     Real sheen_tint = eval(bsdf.sheen_tint, vertex.uv, vertex.uv_screen_size, texture_pool);
-
-    Vector3 h = normalize(dir_in + dir_out);
-    Real L = luminance(base_color);
-    Spectrum C_tint = L > 0 ? base_color / L : make_const_spectrum(1);
-    Spectrum C = (Real(1) - sheen_tint) + sheen_tint * C_tint;
-    return C * P5(Real(1) - abs(dot(h, dir_out))) * abs(dot(frame.n, dir_out));
+    Vector3 half_vector = normalize(dir_in + dir_out);
+    return disney_sheen(frame, base_color, sheen_tint, half_vector, dir_in, dir_out);
 }
 
 Real pdf_sample_bsdf_op::operator()(const DisneySheen &bsdf) const {

@@ -1,22 +1,19 @@
 #include "../microfacet.h"
 
-Spectrum eval_op::operator()(const DisneyGlass &bsdf) const {
-    bool reflect = dot(vertex.geometric_normal, dir_in) *
-                   dot(vertex.geometric_normal, dir_out) > 0;
-    // Flip the shading frame if it is inconsistent with the geometry normal
-    Frame frame = vertex.shading_frame;
-    if (dot(frame.n, dir_in) * dot(vertex.geometric_normal, dir_in) < 0) {
-        frame = -frame;
-    }
-
-    // If we are going into the surface, then we use normal eta
-    // (internal/external), otherwise we use external/internal.
-    Real eta = dot(vertex.geometric_normal, dir_in) > 0 ? bsdf.eta : 1 / bsdf.eta;
-
-    Spectrum Ks = eval(bsdf.base_color, vertex.uv, vertex.uv_screen_size, texture_pool);
+static Spectrum disney_glass(
+    Frame    frame,
+    Spectrum base_color,
+    Real     eta,
+    Real     roughness,
+    Real     anisotropic,
+    bool     reflect,
+    TransportDirection  dir,
+    Vector3  dir_in,
+    Vector3  dir_out
+)
+{
+    Spectrum Ks = base_color;
     Spectrum Kt = sqrt(Ks);
-    Real roughness = eval(bsdf.roughness, vertex.uv, vertex.uv_screen_size, texture_pool);
-    Real anisotropic = eval(bsdf.anisotropic, vertex.uv, vertex.uv_screen_size, texture_pool);
 
     Vector3 half_vector;
     if (reflect) {
@@ -78,6 +75,24 @@ Spectrum eval_op::operator()(const DisneyGlass &bsdf) const {
         return Kt * (eta_factor * (1 - F) * D * G * eta * eta * fabs(h_dot_out * h_dot_in)) / 
             (fabs(dot(frame.n, dir_in)) * sqrt_denom * sqrt_denom);
     }
+}
+
+Spectrum eval_op::operator()(const DisneyGlass &bsdf) const {
+    bool reflect = dot(vertex.geometric_normal, dir_in) *
+                   dot(vertex.geometric_normal, dir_out) > 0;
+    // Flip the shading frame if it is inconsistent with the geometry normal
+    Frame frame = vertex.shading_frame;
+    if (dot(frame.n, dir_in) * dot(vertex.geometric_normal, dir_in) < 0) {
+        frame = -frame;
+    }
+
+    // If we are going into the surface, then we use normal eta
+    // (internal/external), otherwise we use external/internal.
+    Real eta = dot(vertex.geometric_normal, dir_in) > 0 ? bsdf.eta : 1 / bsdf.eta;
+    Spectrum base_color = eval(bsdf.base_color, vertex.uv, vertex.uv_screen_size, texture_pool);
+    Real roughness = eval(bsdf.roughness, vertex.uv, vertex.uv_screen_size, texture_pool);
+    Real anisotropic = eval(bsdf.anisotropic, vertex.uv, vertex.uv_screen_size, texture_pool);
+    return disney_glass(frame, base_color, eta, roughness, anisotropic, reflect, dir, dir_in, dir_out);
 }
 
 Real pdf_sample_bsdf_op::operator()(const DisneyGlass &bsdf) const {
