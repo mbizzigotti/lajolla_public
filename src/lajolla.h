@@ -79,4 +79,6 @@ inline Real degrees(const Real rad) {
 }
 
 #define P2(x) ((x)*(x))
-#define P5(x) ((x)*(x)*(x)*(x)*(x))
+
+template <typename T>
+inline T P5(T x) { return x * x * x * x * x; }
