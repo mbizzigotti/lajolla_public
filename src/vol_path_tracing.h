@@ -199,7 +199,7 @@ Spectrum vol_path_tracing_3(const Scene &scene,
 
         current_path_throughput *= (transmittance / trans_pdf);
 
-        if (!scatter)
+        if (!scatter && vertex_)
             radiance += current_path_throughput * Le(scene, ray, *vertex_);
 
         if (bounces == scene.options.max_depth - 1
@@ -249,7 +249,7 @@ Spectrum vol_path_tracing_3(const Scene &scene,
 
 static Spectrum next_event_estimation(const Scene &scene,
     pcg32_state& rng, const Ray& ray, int current_medium_id,
-    int bounces, Vector3 dir_view)
+    int bounces)
 {
     // Sample point on light
     // First, we sample a point on the light source.
@@ -290,7 +290,7 @@ static Spectrum next_event_estimation(const Scene &scene,
         // Account for the transmittance to next_t
         if (shadow_medium_id != -1)
         {
-            const Medium& medium = scene.media[current_medium_id];
+            const Medium& medium = scene.media[shadow_medium_id];
             Real sigma_t = get_sigma_t(medium, {}).x;
             T_light *= exp(-sigma_t * next_t);
             p_trans_dir *= exp(-sigma_t * next_t);
@@ -322,18 +322,18 @@ static Spectrum next_event_estimation(const Scene &scene,
         const Medium& medium = scene.media[current_medium_id];
         PhaseFunction phase_function = get_phase_function(medium);
 
-        Real G = max(dot(-dir_light, point_on_light.normal), .0) / length_squared(p - p_prime);
-        Real rho = eval(phase_function, dir_view, dir_light).x;
+        Real G = abs(dot(-dir_light, point_on_light.normal)) / length_squared(ray.org - p_prime);
+        Real rho = eval(phase_function, -ray.dir, dir_light).x;
         Real contrib = T_light * G * rho / pdf_nee;
 
         // Multiple importance sampling: it's also possible
         // that a phase function sampling + multiple exponential sampling
         // will reach the light source.
         // We also need to multiply with G to convert phase function PDF to area measure.
-        Real pdf_phase = pdf_sample_phase(phase_function, dir_view, dir_light) * G * p_trans_dir;
+        Real pdf_phase = pdf_sample_phase(phase_function, -ray.dir, dir_light) * G * p_trans_dir;
         
         // power heuristics
-        Real w = 1.0;//(pdf_nee * pdf_nee) / (pdf_nee * pdf_nee + pdf_phase * pdf_phase);
+        Real w = (pdf_nee * pdf_nee) / (pdf_nee * pdf_nee + pdf_phase * pdf_phase);
         return Le * w * contrib;
     }
 
@@ -367,6 +367,7 @@ Spectrum vol_path_tracing_4(const Scene &scene,
         if (vertex_)
             t_hit = distance(ray.org, vertex_->position);
         
+        Real t_next = t_hit;
         Real transmittance = Real(1);
         Real trans_pdf = Real(1);
         if (current_medium_id >= 0)
@@ -393,16 +394,18 @@ Spectrum vol_path_tracing_4(const Scene &scene,
                 transmittance = exp(-sigma_t * t);
             }
 
-            ray.org = ray.org + t * ray.dir;
+            t_next = t;
         }
-
+        ray.org = ray.org + t_next * ray.dir;
         current_path_throughput *= (transmittance / trans_pdf);
+		multi_trans_pdf *= trans_pdf;
 
         if (!scatter)
         {
             if (never_scatter)
             {
-                radiance += current_path_throughput * Le(scene, ray, *vertex_);
+				if (vertex_)
+                	radiance += current_path_throughput * Le(scene, ray, *vertex_);
             }
             else if (vertex_ && is_light(scene.shapes[vertex_->shape_id]))
             {
@@ -416,14 +419,15 @@ Spectrum vol_path_tracing_4(const Scene &scene,
                 int light_id = get_area_light_id(scene.shapes[vertex.shape_id]);
                 assert(light_id >= 0);
                 const Light &light = scene.lights[light_id];
-                Real pdf_nee = pdf_point_on_light(light, light_point, nee_p_cache, scene);
+                Real pdf_nee = light_pmf(scene, light_id) * pdf_point_on_light(light, light_point, nee_p_cache, scene);
                 // The PDF for sampling the light source using phase function sampling + transmittance sampling
                 // The directional sampling pdf was cached in dir_pdf in solid angle measure.
                 // The transmittance sampling pdf was cached in multi_trans_pdf.
-                Vector3 dir_light = light_point.position - nee_p_cache;
-                Real G = abs(dot(dir_light, light_point.normal)) / length_squared(nee_p_cache - light_point.position);
+                Vector3 dir_light = normalize(light_point.position - nee_p_cache);
+                Real G = abs(dot(-dir_light, light_point.normal)) / length_squared(nee_p_cache - light_point.position);
                 Real dir_pdf_ = dir_pdf * multi_trans_pdf * G;
-                Real w = 0.0;//(dir_pdf_ * dir_pdf_) / (dir_pdf_ * dir_pdf_ + pdf_nee * pdf_nee);
+				//printf("HOW %.6f = %.6f * %.6f * %.6f (%.6f)\n", dir_pdf_, dir_pdf, multi_trans_pdf, G, length_squared(nee_p_cache - light_point.position));
+                Real w = (dir_pdf_ * dir_pdf_) / (dir_pdf_ * dir_pdf_ + pdf_nee * pdf_nee);
                 // current_path_throughput already accounts for transmittance.
                 radiance += current_path_throughput * emission(vertex, -ray.dir, scene) * w;
             }
@@ -449,24 +453,23 @@ Spectrum vol_path_tracing_4(const Scene &scene,
             const Medium &medium = scene.media[current_medium_id];
             Real sigma_s = get_sigma_s(medium, {}).x;
 
+			nee_p_cache = ray.org;
             radiance += current_path_throughput
-                * next_event_estimation(scene, rng, ray, current_medium_id, bounces, -ray.dir)
+                * next_event_estimation(scene, rng, ray, current_medium_id, bounces)
                 * sigma_s;
             
             PhaseFunction phase_function = get_phase_function(medium);
             Vector2 rnd_param_uv = { next_pcg32_real<Real>(rng), next_pcg32_real<Real>(rng) };
             Vector3 next_dir = *sample_phase_function(phase_function, -ray.dir, rnd_param_uv);
             dir_pdf = pdf_sample_phase(phase_function, -ray.dir, next_dir);
+			multi_trans_pdf = Real(1);
             current_path_throughput *= (eval(phase_function, -ray.dir, next_dir).x
                                       / dir_pdf)
                                     * sigma_s;
 
-            nee_p_cache = ray.org;
-            multi_trans_pdf *= trans_pdf;
-
             // Update ray direction
             ray.dir = next_dir;
-            never_scatter = false; // NOTE: MAYBE CHANGE THIS
+            never_scatter = false;
         }
         else break; // Hit a surface ....
 
