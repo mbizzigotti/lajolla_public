@@ -272,7 +272,7 @@ static Spectrum next_event_estimation(const Scene &scene,
     Vector3 p_prime = point_on_light.position;
 
     // Compute transmittance to light. Skip through index-matching shapes.
-    Real T_light = Real(1);
+    Spectrum T_light = make_const_spectrum(1);
     int shadow_medium_id = current_medium_id;
     int shadow_bounces = 0;
     Real p_trans_dir = Real(1); // for multiple importance sampling
@@ -292,9 +292,9 @@ static Spectrum next_event_estimation(const Scene &scene,
         if (shadow_medium_id != -1)
         {
             const Medium& medium = scene.media[shadow_medium_id];
-            Real sigma_t = get_sigma_t(medium, {}).x;
+            Spectrum sigma_t = get_sigma_t(medium, {});
             T_light *= exp(-sigma_t * next_t);
-            p_trans_dir *= exp(-sigma_t * next_t);
+            p_trans_dir *= exp(-sigma_t.x * next_t);
         }
 
         // Nothing is blocking, we're done
@@ -318,7 +318,7 @@ static Spectrum next_event_estimation(const Scene &scene,
         p = p + next_t * dir_light;
     }
 
-    if (T_light > 0)
+    if (luminance(T_light) > 0)
     {
         Real G = abs(dot(-dir_light, point_on_light.normal)) / length_squared(ray.org - p_prime);
 
@@ -528,7 +528,7 @@ Spectrum vol_path_tracing_5(const Scene &scene,
             t_hit = distance(ray.org, vertex_->position);
         
         Real t_next = t_hit;
-        Real transmittance = Real(1);
+        Spectrum transmittance = make_const_spectrum(1);
         Real trans_pdf = Real(1);
         if (current_medium_id >= 0)
         {
@@ -544,14 +544,14 @@ Spectrum vol_path_tracing_5(const Scene &scene,
             if (t < t_hit)
             {
                 trans_pdf = exp(-sigma_t.x * t) * sigma_t.x;
-                transmittance = exp(-sigma_t.x * t);
+                transmittance = exp(-sigma_t * t);
                 scatter = true;
             }
             else
             {
                 t = t_hit;
                 trans_pdf = exp(-sigma_t.x * t);
-                transmittance = exp(-sigma_t.x * t);
+                transmittance = exp(-sigma_t * t);
             }
 
             t_next = t;
@@ -675,12 +675,14 @@ Spectrum vol_path_tracing_5(const Scene &scene,
                 break;
             }
             current_path_throughput *= f / bsdf_pdf;
-
+			
             // Update ray direction
             ray.org = vertex.position;
             ray.dir = dir_bsdf;
             ray.tnear = get_intersection_epsilon(scene);
             ray.tfar = infinity<Real>();
+			if (vertex.interior_medium_id != -1)
+				current_medium_id = update_medium(ray, vertex, current_medium_id);
             phase_sampling = false;
             never_mis = false;
         }
