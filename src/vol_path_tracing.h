@@ -908,7 +908,6 @@ Spectrum vol_path_tracing(const Scene &scene,
 				accum_t = min(accum_t + t, t_hit);
 				if (t < dt)
 				{
-					// TODO: possible error: position of sigma t
                     Spectrum sigma_t = get_sigma_t(medium, ray.org + accum_t * ray.dir);
 
 					Spectrum real_prob = sigma_t / majorant[channel];
@@ -916,7 +915,7 @@ Spectrum vol_path_tracing(const Scene &scene,
 					{
 						// Hit a "real" particle
 						scatter = true;
-                        t_next = t;
+                        t_next = accum_t;
 						transmittance *= exp(-majorant * t) / max(majorant);
 						trans_dir_pdf *= exp(-majorant * t) * majorant * real_prob / max(majorant);
 						break;
