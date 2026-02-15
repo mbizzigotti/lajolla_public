@@ -1,4 +1,5 @@
 #include "gpu_device.h"
+#include "flexception.h"
 #include "shaders/basic.slang.inl"
 
 /* References */
@@ -110,7 +111,12 @@ GPUDevice::GPUDevice() {
 			.ppEnabledExtensionNames = device_extensions,
 		};
 		
-		assert(vkCreateDevice(physical_device, &device_info, 0, &device) == VK_SUCCESS);
+		VkResult result = vkCreateDevice(physical_device, &device_info, 0, &device);
+		if (result != VK_SUCCESS) {
+			if (result == VK_ERROR_EXTENSION_NOT_PRESENT)
+				Error("Device extensions not present!");
+			Error("Failed to create Vulkan device!");
+		}
 
 		vkGetDeviceQueue(device, 0, 0, &queue);
 

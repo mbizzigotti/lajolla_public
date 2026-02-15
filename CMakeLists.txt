@@ -107,6 +107,10 @@ set(SRCS src/3rdparty/miniz.h
 
 add_library(lajolla_lib STATIC ${SRCS})
 add_library(RGFW SHARED "src/RGFW.c")
+if(APPLE)
+    target_link_libraries(RGFW PRIVATE "$<LINK_LIBRARY:FRAMEWORK,Cocoa>")
+    target_link_libraries(RGFW PRIVATE "$<LINK_LIBRARY:FRAMEWORK,IOKit>")
+endif()
 add_executable(lajolla src/main.cpp)
 target_link_libraries(lajolla lajolla_lib RGFW)
 if(MSVC)
