@@ -27,7 +27,7 @@ inline bool ends_with(const string &str, const string &suffix) {
 
 Image1 imread1(const fs::path &filename) {
     Image1 img;
-    std::string extension = to_lowercase(filename.extension().string());
+    std::string extension = to_lowercase(filename.extension().generic_string());
     // JPG, PNG, TGA, BMP, PSD, GIF, HDR, PIC
     if (extension == ".jpg" ||
           extension == ".png" ||
@@ -41,7 +41,7 @@ Image1 imread1(const fs::path &filename) {
 #ifdef _WINDOWS
         float* data = stbi_loadf(filename.string().c_str(), &w, &h, &n, 1);
 #else
-        float *data = stbi_loadf(filename.c_str(), &w, &h, &n, 1);
+        float *data = stbi_loadf(filename.generic_string().c_str(), &w, &h, &n, 1);
 #endif
         img = Image1(w, h);
         if (data == nullptr) {
@@ -59,12 +59,12 @@ Image1 imread1(const fs::path &filename) {
 #ifdef _WINDOWS
         int ret = LoadEXR(&data, &width, &height, filename.string().c_str(), &err);
 #else
-        int ret = LoadEXR(&data, &width, &height, filename.c_str(), &err);
+        int ret = LoadEXR(&data, &width, &height, filename.generic_string().c_str(), &err);
 #endif
         if (ret != TINYEXR_SUCCESS) {
             std::cerr << "OpenEXR error: " << err << std::endl;
             FreeEXRErrorMessage(err);
-            Error(std::string("Failure when loading image: ") + filename.string());
+            Error(std::string("Failure when loading image: ") + filename.generic_string());
         }
         img = Image1(width, height);
         for (int i = 0; i < width * height; i++) {
@@ -72,14 +72,14 @@ Image1 imread1(const fs::path &filename) {
         }
         free(data);
     } else {
-        Error(std::string("Unsupported image format: ") + filename.string());
+        Error(std::string("Unsupported image format: ") + filename.generic_string());
     }
     return img;
 }
 
 Image3 imread3(const fs::path &filename) {
     Image3 img;
-    std::string extension = to_lowercase(filename.extension().string());
+    std::string extension = to_lowercase(filename.extension().generic_string());
     // JPG, PNG, TGA, BMP, PSD, GIF, HDR, PIC
     if (extension == ".jpg" ||
           extension == ".png" ||
@@ -93,7 +93,7 @@ Image3 imread3(const fs::path &filename) {
 #ifdef _WINDOWS
         float* data = stbi_loadf(filename.string().c_str(), &w, &h, &n, 3);
 #else
-        float* data = stbi_loadf(filename.c_str(), &w, &h, &n, 3);
+        float* data = stbi_loadf(filename.generic_string().c_str(), &w, &h, &n, 3);
 #endif
         img = Image3(w, h);
         if (data == nullptr) {
@@ -114,12 +114,12 @@ Image3 imread3(const fs::path &filename) {
 #ifdef _WINDOWS
         int ret = LoadEXR(&data, &width, &height, filename.string().c_str(), &err);
 #else
-        int ret = LoadEXR(&data, &width, &height, filename.c_str(), &err);
+        int ret = LoadEXR(&data, &width, &height, filename.generic_string().c_str(), &err);
 #endif
         if (ret != TINYEXR_SUCCESS) {
             std::cerr << "OpenEXR error: " << err << std::endl;
             FreeEXRErrorMessage(err);
-            Error(std::string("Failure when loading image: ") + filename.string());
+            Error(std::string("Failure when loading image: ") + filename.generic_string());
         }
         img = Image3(width, height);
         for (int i = 0; i < width * height; i++) {
@@ -127,7 +127,7 @@ Image3 imread3(const fs::path &filename) {
         }
         free(data);
     } else {
-        Error(std::string("Unsupported image format: ") + filename.string());
+        Error(std::string("Unsupported image format: ") + filename.generic_string());
     }
     return img;
 }
@@ -136,9 +136,9 @@ void imwrite(const fs::path &filename, const Image3 &image) {
 #ifdef _WINDOWS
     if (ends_with(filename.string(), ".pfm")) {
 #else
-    if (ends_with(filename, ".pfm")) {
+    if (ends_with(filename.generic_string(), ".pfm")) {
 #endif
-        std::ofstream ofs(filename.c_str(), std::ios::binary);
+        std::ofstream ofs(filename, std::ios::binary);
         ofs << "PF" << std::endl;
         ofs << image.width << " " << image.height << std::endl;
         ofs << "-1" << std::endl;
@@ -150,7 +150,7 @@ void imwrite(const fs::path &filename, const Image3 &image) {
 #ifdef _WINDOWS
     } else if (ends_with(filename.string(), ".exr")) {
 #else
-    } else if (ends_with(filename, ".exr")) {
+    } else if (ends_with(filename.generic_string(), ".exr")) {
 #endif
         // Convert image to float
         vector<Vector3f> data(image.data.size());
@@ -162,12 +162,12 @@ void imwrite(const fs::path &filename, const Image3 &image) {
             image.width, image.height, 3, 1 /* write as fp16 */, filename.string().c_str(), &err);
 #else
         int ret = SaveEXR((float*)data.data(),
-            image.width, image.height, 3, 1 /* write as fp16 */, filename.c_str(), &err);
+            image.width, image.height, 3, 1 /* write as fp16 */, filename.generic_string().c_str(), &err);
 #endif
         if (ret != TINYEXR_SUCCESS) {
             std::cerr << "OpenEXR error: " << err << std::endl;
             FreeEXRErrorMessage(err);
-            Error(std::string("Failure when writing image: ") + filename.string());
+            Error(std::string("Failure when writing image: ") + filename.generic_string());
         }
     }
 }

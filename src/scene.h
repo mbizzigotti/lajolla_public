@@ -36,6 +36,8 @@ struct BSphere {
     Vector3 center;
 };
 
+struct GPUDevice;
+
 /// A "Scene" contains the camera, materials, geometry (shapes), lights,
 /// and also the rendering options such as number of samples per pixel or
 /// the parameters of our renderer.
@@ -51,12 +53,24 @@ struct Scene {
           const TexturePool &texture_pool,
           const RenderOptions &options,
           const std::string &output_filename);
+    Scene(GPUDevice *gpu_device,
+          const Camera &camera,
+          const std::vector<Material> &materials,
+          const std::vector<Shape> &shapes,
+          const std::vector<Light> &lights,
+          const std::vector<Medium> &media,
+          int envmap_light_id, /* -1 if the scene has no envmap */
+          const TexturePool &texture_pool,
+          const RenderOptions &options,
+          const std::string &output_filename);
     ~Scene();
     Scene(const Scene& t) = delete;
     Scene& operator=(const Scene& t) = delete;
 
-    RTCDevice embree_device;
-    RTCScene embree_scene;
+	GPUDevice *gpu_device;
+
+    RTCDevice embree_device = nullptr;
+    RTCScene embree_scene = nullptr;
     // We decide to maintain a copy of the scene here.
     // This allows us to manage the memory of the scene ourselves and decouple
     // from the scene parser, but it's obviously less efficient.

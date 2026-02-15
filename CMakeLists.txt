@@ -16,8 +16,9 @@ else()
 endif()
 
 find_package(Embree REQUIRED)
+find_package(Vulkan REQUIRED)
 include_directories(${EMBREE_INCLUDE_PATH})
-link_libraries(${EMBREE_LIBRARY})
+link_libraries(${EMBREE_LIBRARY} Vulkan::Vulkan)
 
 include_directories(${CMAKE_SOURCE_DIR}/src)
 
@@ -29,6 +30,7 @@ set(SRCS src/3rdparty/miniz.h
          src/3rdparty/stb_image.h
          src/3rdparty/tinyexr.h
          src/3rdparty/tinyply.h
+         src/3rdparty/RGFW.h
          src/filters/box.inl
          src/filters/gaussian.inl
          src/filters/tent.inl
@@ -60,6 +62,8 @@ set(SRCS src/3rdparty/miniz.h
          src/image.h
          src/intersection.h
          src/lajolla.h
+         src/gpu_device.h
+         src/gpu_device.cpp
          src/light.h
          src/material.h
          src/matrix.h
@@ -102,8 +106,9 @@ set(SRCS src/3rdparty/miniz.h
          src/volume.cpp)
 
 add_library(lajolla_lib STATIC ${SRCS})
+add_library(RGFW SHARED "src/RGFW.c")
 add_executable(lajolla src/main.cpp)
-target_link_libraries(lajolla lajolla_lib)
+target_link_libraries(lajolla lajolla_lib RGFW)
 if(MSVC)
   add_custom_command(TARGET lajolla POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_directory

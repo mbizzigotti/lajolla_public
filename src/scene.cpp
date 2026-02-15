@@ -52,10 +52,29 @@ Scene::Scene(const RTCDevice &embree_device,
     light_dist = make_table_dist_1d(power);
 }
 
+Scene::Scene(GPUDevice *gpu_device,
+             const Camera &camera,
+             const std::vector<Material> &materials,
+             const std::vector<Shape> &shapes,
+             const std::vector<Light> &lights,
+             const std::vector<Medium> &media,
+             int envmap_light_id,
+             const TexturePool &texture_pool,
+             const RenderOptions &options,
+             const std::string &output_filename) : 
+        gpu_device(gpu_device), camera(camera), materials(materials),
+        shapes(shapes), lights(lights), media(media),
+        envmap_light_id(envmap_light_id),
+        texture_pool(texture_pool), options(options),
+        output_filename(output_filename) {
+	std::cout << "TODO: Create scene GPU\n";
+}
+
 Scene::~Scene() {
     // This decreses the reference count of embree_scene in Embree,
     // if it reaches zero, Embree will deallocate the scene.
-    rtcReleaseScene(embree_scene);
+	if (embree_scene)
+    	rtcReleaseScene(embree_scene);
 }
 
 int sample_light(const Scene &scene, Real u) {

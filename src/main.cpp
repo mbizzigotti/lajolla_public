@@ -3,6 +3,7 @@
 #include "image.h"
 #include "render.h"
 #include "timer.h"
+#include "gpu_device.h"
 #include <embree4/rtcore.h>
 #include <memory>
 #include <thread>
@@ -10,10 +11,11 @@
 
 int main(int argc, char *argv[]) {
     if (argc <= 1) {
-        std::cout << "[Usage] ./lajolla [-t num_threads] [-o output_file_name] filename.xml" << std::endl;
+        std::cout << "[Usage] ./lajolla [-g] [-t num_threads] [-o output_file_name] filename.xml" << std::endl;
         return 0;
-    }
+	}
 
+	bool use_gpu = false;
     int num_threads = std::thread::hardware_concurrency();
     std::string outputfile = "";
     std::vector<std::string> filenames;
@@ -22,10 +24,27 @@ int main(int argc, char *argv[]) {
             num_threads = std::stoi(std::string(argv[++i]));
         } else if (std::string(argv[i]) == "-o") {
             outputfile = std::string(argv[++i]);
+        } else if (std::string(argv[i]) == "-g") {
+			use_gpu = true;
         } else {
             filenames.push_back(std::string(argv[i]));
         }
     }
+
+	if (use_gpu) {
+		GPUDevice gpu_device;
+        Timer timer;
+        tick(timer);
+        std::cout << "Parsing and constructing scene " << filenames[0] << "." << std::endl;
+        std::unique_ptr<Scene> scene = parse_scene(filenames[0], &gpu_device);
+        std::cout << "Done. Took " << tick(timer) << " seconds." << std::endl;
+        std::cout << "Rendering..." << std::endl;
+		RGFW_window *window = RGFW_createWindow(
+			"LaJolla!", 0, 0, scene->camera.width, scene->camera.height, RGFW_windowCenter);
+		gpu_device.attach(window);
+		gpu_device.render(window, *scene);
+		return 0;
+	}
 
     RTCDevice embree_device = rtcNewDevice(nullptr);
     parallel_init(num_threads);
@@ -48,4 +67,3 @@ int main(int argc, char *argv[]) {
     rtcReleaseDevice(embree_device);
     return 0;
 }
-

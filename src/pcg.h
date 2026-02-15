@@ -40,29 +40,26 @@ inline pcg32_state init_pcg32(uint64_t stream_id = 1, uint64_t seed = 0x31e241f8
     return s;
 }
 
-template <typename T>
+// https://github.com/wjakob/pcg32/blob/master/pcg32.h
+template <typename T = Real>
 T next_pcg32_real(pcg32_state &rng) {
-    return T(0);
-}
-
-// https://github.com/wjakob/pcg32/blob/master/pcg32.h
-template <>
-float next_pcg32_real(pcg32_state &rng) {
-    union {
-        uint32_t u;
-        float f;
-    } x;
-    x.u = (next_pcg32(rng) >> 9) | 0x3f800000u;
-    return x.f - 1.0f;
-}
-
-// https://github.com/wjakob/pcg32/blob/master/pcg32.h
-template <>
-double next_pcg32_real(pcg32_state &rng) {
-    union {
-        uint64_t u;
-        double d;
-    } x;
-    x.u = ((uint64_t) next_pcg32(rng) << 20) | 0x3ff0000000000000ULL;
-    return x.d - 1.0;
+	if constexpr(std::is_same_v<T, float>)
+	{
+		union {
+			uint32_t u;
+			float f;
+		} x;
+		x.u = (next_pcg32(rng) >> 9) | 0x3f800000u;
+		return x.f - 1.0f;
+	}
+	if constexpr(std::is_same_v<T, double>)
+	{
+		union {
+			uint64_t u;
+			double d;
+		} x;
+		x.u = ((uint64_t) next_pcg32(rng) << 20) | 0x3ff0000000000000ULL;
+		return x.d - 1.0;
+	}
+	return 0;
 }

@@ -1406,14 +1406,14 @@ Shape parse_shape(pugi::xml_node node,
     return shape;
 }
 
-std::unique_ptr<Scene> parse_scene(pugi::xml_node node, const RTCDevice &embree_device) {
+struct SceneParser {
     RenderOptions options;
-    Camera camera(Matrix4x4::identity(),
+    Camera camera { Matrix4x4::identity(),
                   c_default_fov,
                   c_default_res,
                   c_default_res,
                   c_default_filter,
-                  -1 /*medium_id*/);
+                  -1 /*medium_id*/ };
     std::string filename = c_default_filename;
     std::vector<Material> materials;
     std::map<std::string /* name id */, int /* index id */> material_map;
@@ -1426,178 +1426,196 @@ std::unique_ptr<Scene> parse_scene(pugi::xml_node node, const RTCDevice &embree_
     // For <default> tags
     // e.g., <default name="spp" value="4096"/> will map "spp" to "4096"
     std::map<std::string, std::string> default_map;
-
     int envmap_light_id = -1;
-    for (auto child : node.children()) {
-        std::string name = child.name();
-        if (name == "default") {
-            parse_default_map(child, default_map);
-        } else if (name == "integrator") {
-            options = parse_integrator(child, default_map);
-        } else if (name == "sensor") {
-            ParsedSampler sampler;
-            std::tie(camera, filename, sampler) =
-                parse_sensor(child, media, medium_map, default_map);
-            options.samples_per_pixel = sampler.sample_count;
-        } else if (name == "bsdf") {
-            std::string material_name;
-            Material m;
-            std::tie(material_name, m) = parse_bsdf(
-                child, texture_map, texture_pool, default_map);
-            if (!material_name.empty()) {
-                material_map[material_name] = materials.size();
-                materials.push_back(m);
-            }
-        } else if (name == "shape") {
-            Shape s = parse_shape(child,
-                                  materials,
-                                  material_map,
-                                  texture_map,
-                                  texture_pool,
-                                  media,
-                                  medium_map,
-                                  lights,
-                                  shapes,
-                                  default_map);
-            shapes.push_back(s);
-        } else if (name == "texture") {
-            std::string id = child.attribute("id").value();
-            if (texture_map.find(id) != texture_map.end()) {
-                Error(std::string("Duplicated texture ID:") + id);
-            }
-            texture_map[id] = parse_texture(child, default_map);
-        } else if (name == "emitter") {
-            std::string type = child.attribute("type").value();
-            if (type == "envmap") {
-                std::string filename;
-                Real scale = 1;
-                Matrix4x4 to_world = Matrix4x4::identity();
-                for (auto grand_child : child.children()) {
-                    std::string name = grand_child.attribute("name").value();
-                    if (name == "filename") {
-                        filename = parse_string(
-                            grand_child.attribute("value").value(), default_map);
-                    } else if (name == "toWorld" || name == "to_world") {
-                        to_world = parse_transform(grand_child, default_map);
-                    } else if (name == "scale") {
-                        scale = parse_float(
-                            grand_child.attribute("value").value(), default_map);
-                    }
-                }
-                if (filename.size() > 0) {
-                    Texture<Spectrum> t = make_image_spectrum_texture(
-                        "__envmap_texture__", filename, texture_pool, 1, 1);
-                    Matrix4x4 to_local = inverse(to_world);
-                    lights.push_back(Envmap{t, to_world, to_local, scale});
-                    envmap_light_id = (int)lights.size() - 1;
-                } else {
-                    Error("Filename unspecified for envmap.");
-                }
-            } else if (type == "point") {
-                std::cout << "[Warning] converting a point light into a small spherical light." << std::endl;
-                Vector3 position = Vector3{0, 0, 0};
-                Spectrum intensity = make_const_spectrum(1);
-                for (auto grand_child : child.children()) {
-                    std::string name = grand_child.attribute("name").value();
-                    if (name == "position") {
-                        if (!grand_child.attribute("x").empty()) {
-                            position.x = parse_float(grand_child.attribute("x").value(), default_map);
-                        }
-                        if (!grand_child.attribute("y").empty()) {
-                            position.y = parse_float(grand_child.attribute("y").value(), default_map);
-                        }
-                        if (!grand_child.attribute("z").empty()) {
-                            position.z = parse_float(grand_child.attribute("z").value(), default_map);
-                        }
-                    } else if (name == "intensity") {
-                        intensity = parse_intensity(grand_child, default_map);
-                    }
-                }
-                Shape s = Sphere{{}, position, Real(1e-4)};
-                intensity *= (c_FOURPI / surface_area(s));
-                Material m = Lambertian{
-                    make_constant_spectrum_texture(make_zero_spectrum())};
-                int material_id = materials.size();
-                materials.push_back(m);
-                set_material_id(s, material_id);
-                set_area_light_id(s, lights.size());
-                lights.push_back(DiffuseAreaLight{(int)shapes.size() /* shape ID */, intensity});
-                shapes.push_back(s);
-            } else if (type == "directional") {
-                std::cout << "[Warning] converting a directional light into a small spherical light." << std::endl;
-                Vector3 direction = Vector3{0, 0, 1};
-                Spectrum intensity = make_const_spectrum(1);
-                for (auto grand_child : child.children()) {
-                    std::string name = grand_child.attribute("name").value();
-                    if (name == "direction") {
-                        if (!grand_child.attribute("x").empty()) {
-                            direction.x = parse_float(grand_child.attribute("x").value(), default_map);
-                        }
-                        if (!grand_child.attribute("y").empty()) {
-                            direction.y = parse_float(grand_child.attribute("y").value(), default_map);
-                        }
-                        if (!grand_child.attribute("z").empty()) {
-                            direction.z = parse_float(grand_child.attribute("z").value(), default_map);
-                        }
-                    } else if (name == "toWorld" || name == "to_world") {
-                        Matrix4x4 to_world = parse_transform(grand_child, default_map);
-                        direction = xform_vector(to_world, direction);
-                    } else if (name == "irradiance") {
-                        intensity = parse_intensity(grand_child, default_map);
-                    }
-                }
-                direction = normalize(direction);
-                Vector3 tangent, bitangent;
-                std::tie(tangent, bitangent) = coordinate_system(-direction);
-                TriangleMesh mesh;
-                Real length = Real(1e-3);
-                Real dist = Real(1e3);
-                mesh.positions = {
-                    Real(0.5) * length * (-tangent-bitangent) - dist * direction,
-                    Real(0.5) * length * ( tangent-bitangent) - dist * direction,
-                    Real(0.5) * length * ( tangent+bitangent) - dist * direction,
-                    Real(0.5) * length * (-tangent+bitangent) - dist * direction};
-                mesh.indices = {
-                    Vector3i{0, 1, 2}, Vector3i{0, 2, 3}
-                };
-                mesh.normals = {
-                    direction, direction, direction, direction
-                };
-                intensity *= ((dist * dist) / (length * length));
-                Shape s = mesh;
-                Material m = Lambertian{
-                    make_constant_spectrum_texture(make_zero_spectrum())};
-                int material_id = materials.size();
-                materials.push_back(m);
-                set_material_id(s, material_id);
-                set_area_light_id(s, lights.size());
-                lights.push_back(DiffuseAreaLight{(int)shapes.size() /* shape ID */, intensity});
-                shapes.push_back(s);
-            } else {
-                Error(std::string("Unknown emitter type:") + type);
-            }
-        } else if (name == "medium") {
-            std::string medium_name;
-            Medium m;
-            std::tie(medium_name, m) = parse_medium(child, default_map);
-            if (!medium_name.empty()) {
-                medium_map[medium_name] = media.size();
-                media.push_back(m);
-            }
-        }
-    }
-    return std::make_unique<Scene>(
-                embree_device,
-                camera,
-                materials,
-                shapes,
-                lights,
-                media,
-                envmap_light_id,
-                texture_pool,
-                options,
-                filename);
-}
+
+	SceneParser& parse(pugi::xml_node node) {
+		for (auto child : node.children()) {
+			std::string name = child.name();
+			if (name == "default") {
+				parse_default_map(child, default_map);
+			} else if (name == "integrator") {
+				options = parse_integrator(child, default_map);
+			} else if (name == "sensor") {
+				ParsedSampler sampler;
+				std::tie(camera, filename, sampler) =
+					parse_sensor(child, media, medium_map, default_map);
+				options.samples_per_pixel = sampler.sample_count;
+			} else if (name == "bsdf") {
+				std::string material_name;
+				Material m;
+				std::tie(material_name, m) = parse_bsdf(
+					child, texture_map, texture_pool, default_map);
+				if (!material_name.empty()) {
+					material_map[material_name] = materials.size();
+					materials.push_back(m);
+				}
+			} else if (name == "shape") {
+				Shape s = parse_shape(child,
+									materials,
+									material_map,
+									texture_map,
+									texture_pool,
+									media,
+									medium_map,
+									lights,
+									shapes,
+									default_map);
+				shapes.push_back(s);
+			} else if (name == "texture") {
+				std::string id = child.attribute("id").value();
+				if (texture_map.find(id) != texture_map.end()) {
+					Error(std::string("Duplicated texture ID:") + id);
+				}
+				texture_map[id] = parse_texture(child, default_map);
+			} else if (name == "emitter") {
+				std::string type = child.attribute("type").value();
+				if (type == "envmap") {
+					std::string filename;
+					Real scale = 1;
+					Matrix4x4 to_world = Matrix4x4::identity();
+					for (auto grand_child : child.children()) {
+						std::string name = grand_child.attribute("name").value();
+						if (name == "filename") {
+							filename = parse_string(
+								grand_child.attribute("value").value(), default_map);
+						} else if (name == "toWorld" || name == "to_world") {
+							to_world = parse_transform(grand_child, default_map);
+						} else if (name == "scale") {
+							scale = parse_float(
+								grand_child.attribute("value").value(), default_map);
+						}
+					}
+					if (filename.size() > 0) {
+						Texture<Spectrum> t = make_image_spectrum_texture(
+							"__envmap_texture__", filename, texture_pool, 1, 1);
+						Matrix4x4 to_local = inverse(to_world);
+						lights.push_back(Envmap{t, to_world, to_local, scale});
+						envmap_light_id = (int)lights.size() - 1;
+					} else {
+						Error("Filename unspecified for envmap.");
+					}
+				} else if (type == "point") {
+					std::cout << "[Warning] converting a point light into a small spherical light." << std::endl;
+					Vector3 position = Vector3{0, 0, 0};
+					Spectrum intensity = make_const_spectrum(1);
+					for (auto grand_child : child.children()) {
+						std::string name = grand_child.attribute("name").value();
+						if (name == "position") {
+							if (!grand_child.attribute("x").empty()) {
+								position.x = parse_float(grand_child.attribute("x").value(), default_map);
+							}
+							if (!grand_child.attribute("y").empty()) {
+								position.y = parse_float(grand_child.attribute("y").value(), default_map);
+							}
+							if (!grand_child.attribute("z").empty()) {
+								position.z = parse_float(grand_child.attribute("z").value(), default_map);
+							}
+						} else if (name == "intensity") {
+							intensity = parse_intensity(grand_child, default_map);
+						}
+					}
+					Shape s = Sphere{{}, position, Real(1e-4)};
+					intensity *= (c_FOURPI / surface_area(s));
+					Material m = Lambertian{
+						make_constant_spectrum_texture(make_zero_spectrum())};
+					int material_id = materials.size();
+					materials.push_back(m);
+					set_material_id(s, material_id);
+					set_area_light_id(s, lights.size());
+					lights.push_back(DiffuseAreaLight{(int)shapes.size() /* shape ID */, intensity});
+					shapes.push_back(s);
+				} else if (type == "directional") {
+					std::cout << "[Warning] converting a directional light into a small spherical light." << std::endl;
+					Vector3 direction = Vector3{0, 0, 1};
+					Spectrum intensity = make_const_spectrum(1);
+					for (auto grand_child : child.children()) {
+						std::string name = grand_child.attribute("name").value();
+						if (name == "direction") {
+							if (!grand_child.attribute("x").empty()) {
+								direction.x = parse_float(grand_child.attribute("x").value(), default_map);
+							}
+							if (!grand_child.attribute("y").empty()) {
+								direction.y = parse_float(grand_child.attribute("y").value(), default_map);
+							}
+							if (!grand_child.attribute("z").empty()) {
+								direction.z = parse_float(grand_child.attribute("z").value(), default_map);
+							}
+						} else if (name == "toWorld" || name == "to_world") {
+							Matrix4x4 to_world = parse_transform(grand_child, default_map);
+							direction = xform_vector(to_world, direction);
+						} else if (name == "irradiance") {
+							intensity = parse_intensity(grand_child, default_map);
+						}
+					}
+					direction = normalize(direction);
+					Vector3 tangent, bitangent;
+					std::tie(tangent, bitangent) = coordinate_system(-direction);
+					TriangleMesh mesh;
+					Real length = Real(1e-3);
+					Real dist = Real(1e3);
+					mesh.positions = {
+						Real(0.5) * length * (-tangent-bitangent) - dist * direction,
+						Real(0.5) * length * ( tangent-bitangent) - dist * direction,
+						Real(0.5) * length * ( tangent+bitangent) - dist * direction,
+						Real(0.5) * length * (-tangent+bitangent) - dist * direction};
+					mesh.indices = {
+						Vector3i{0, 1, 2}, Vector3i{0, 2, 3}
+					};
+					mesh.normals = {
+						direction, direction, direction, direction
+					};
+					intensity *= ((dist * dist) / (length * length));
+					Shape s = mesh;
+					Material m = Lambertian{
+						make_constant_spectrum_texture(make_zero_spectrum())};
+					int material_id = materials.size();
+					materials.push_back(m);
+					set_material_id(s, material_id);
+					set_area_light_id(s, lights.size());
+					lights.push_back(DiffuseAreaLight{(int)shapes.size() /* shape ID */, intensity});
+					shapes.push_back(s);
+				} else {
+					Error(std::string("Unknown emitter type:") + type);
+				}
+			} else if (name == "medium") {
+				std::string medium_name;
+				Medium m;
+				std::tie(medium_name, m) = parse_medium(child, default_map);
+				if (!medium_name.empty()) {
+					medium_map[medium_name] = media.size();
+					media.push_back(m);
+				}
+			}
+		}
+		return *this;
+	}
+	std::unique_ptr<Scene> create_scene(const RTCDevice &embree_device) {
+		return std::make_unique<Scene>(
+					embree_device,
+					camera,
+					materials,
+					shapes,
+					lights,
+					media,
+					envmap_light_id,
+					texture_pool,
+					options,
+					filename);
+	}
+	std::unique_ptr<Scene> create_scene(GPUDevice *gpu_device) {
+		return std::make_unique<Scene>(
+					gpu_device,
+					camera,
+					materials,
+					shapes,
+					lights,
+					media,
+					envmap_light_id,
+					texture_pool,
+					options,
+					filename);
+	}
+};
 
 std::unique_ptr<Scene> parse_scene(const fs::path &filename, const RTCDevice &embree_device) {
     pugi::xml_document doc;
@@ -1610,7 +1628,24 @@ std::unique_ptr<Scene> parse_scene(const fs::path &filename, const RTCDevice &em
     // back up the current working directory and switch to the parent folder of the file
     fs::path old_path = fs::current_path();
     fs::current_path(filename.parent_path());
-    std::unique_ptr<Scene> scene = parse_scene(doc.child("scene"), embree_device);
+    std::unique_ptr<Scene> scene = SceneParser().parse(doc.child("scene")).create_scene(embree_device);
+    // switch back to the old current working directory
+    fs::current_path(old_path);
+    return scene;
+}
+
+std::unique_ptr<Scene> parse_scene(const fs::path &filename, GPUDevice *gpu_device) {
+    pugi::xml_document doc;
+    pugi::xml_parse_result result = doc.load_file(filename.c_str());
+    if (!result) {
+        std::cerr << "Error description: " << result.description() << std::endl;
+        std::cerr << "Error offset: " << result.offset << std::endl;
+        Error("Parse error");
+    }
+    // back up the current working directory and switch to the parent folder of the file
+    fs::path old_path = fs::current_path();
+    fs::current_path(filename.parent_path());
+    std::unique_ptr<Scene> scene = SceneParser().parse(doc.child("scene")).create_scene(gpu_device);
     // switch back to the old current working directory
     fs::current_path(old_path);
     return scene;
