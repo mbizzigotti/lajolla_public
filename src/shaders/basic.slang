@@ -2,10 +2,10 @@
 // Global Resources
 // ------------------------------------------------------------
 
-#if 0
-[[vk::binding(0)]] RaytracingAccelerationStructure gScene;
-[[vk::binding(1)]] RWTexture2D<float4>             gOutput;
+[[vk::binding(0)]] RWTexture2D<float4> image;
+[[vk::binding(1)]] RaytracingAccelerationStructure scene;
 
+#if 0
 // Camera parameters
 [[vk::binding(2)]] cbuffer CameraData
 {
@@ -40,6 +40,10 @@ void main()
 {
     uint2 pixelIndex = DispatchRaysIndex().xy;
     uint2 dims       = DispatchRaysDimensions().xy;
+
+    float2 uv = float2(pixelIndex) / float2(dims);
+
+    image.Store(pixelIndex, float4(uv, 0.0, 1.0));
 }
 
 // ------------------------------------------------------------
