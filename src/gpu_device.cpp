@@ -255,6 +255,11 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 		std::vector<VkSurfaceFormatKHR> formats(format_count);
 		vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &format_count, formats.data());
 		VkSurfaceFormatKHR surfaceFormat = formats[0];
+		for (VkSurfaceFormatKHR format : formats) {
+			if (format.format == VK_FORMAT_R8G8B8A8_UNORM) {
+				surfaceFormat = format;
+			}
+		}
 		swap_format = surfaceFormat.format;
 
 		image_extent = { (uint32_t)scene->camera.width, (uint32_t)scene->camera.height };
@@ -630,7 +635,7 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 
 		// create SBT buffer (host visible)
 		VkDeviceSize sbtSize = groupCount * baseAlignment;
-		createBuffer(sbtSize, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, sbt_buffer.buffer, sbt_buffer.memory);
+		createBuffer(sbtSize, VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, sbt_buffer.buffer, sbt_buffer.memory);
 		void* sbtMap; vkMapMemory(device, sbt_buffer.memory, 0, sbtSize, 0, &sbtMap);
 		for (uint32_t g = 0; g < groupCount; ++g) {
 			memcpy(reinterpret_cast<char*>(sbtMap) + g * baseAlignment, shaderHandleStorage.data() + g * handleSize, handleSize);
@@ -666,12 +671,56 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 
 void GPUDevice::render(RGFW_window* window)
 {
-	return;
+	// record command buffer: trace rays into storage image, then copy to swapchain image
+	VkCommandBufferAllocateInfo ca{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO }; ca.commandPool = command_pool; ca.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; ca.commandBufferCount = 1;
+	VkCommandBuffer cmd; vkAllocateCommandBuffers(device, &ca, &cmd);
+
+	uint32_t width = image_extent.width;
+	uint32_t height = image_extent.height;
+
 	while (!RGFW_window_shouldClose(window))
 	{
 		RGFW_pollEvents();
 
-		VkStridedDeviceAddressRegionKHR callableSBT{};
+		uint32_t image_index;
+		vkAcquireNextImageKHR(device, swap_chain, UINT64_MAX, image_available_semaphore, 0, &image_index);
+
+		VkCommandBufferBeginInfo bi2{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO }; bi2.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+		vkBeginCommandBuffer(cmd, &bi2);
+
+		// transition storage image to general
+		VkImageMemoryBarrier barrier{}; barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER; barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL; barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED; barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED; barrier.image = storage_image; barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; barrier.subresourceRange.baseMipLevel = 0; barrier.subresourceRange.levelCount = 1; barrier.subresourceRange.baseArrayLayer = 0; barrier.subresourceRange.layerCount = 1; barrier.srcAccessMask = 0; barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+		vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+		// bind pipeline and descriptor sets and trace
+		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, pipeline);
+		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, pipeline_layout, 0, 1, &descriptor_set, 0, nullptr);
+
+		VkStridedDeviceAddressRegionKHR callable_sbt{};
+		vkCmdTraceRaysKHR(cmd, &rgen_sbt, &miss_sbt, &chit_sbt, &callable_sbt, width, height, 1);
+
+		// transition swapchain image to transfer dst
+		VkImage dst = images[image_index];
+		VkImageMemoryBarrier toCopy{}; toCopy.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER; toCopy.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; toCopy.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; toCopy.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED; toCopy.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED; toCopy.image = dst; toCopy.subresourceRange = barrier.subresourceRange; toCopy.srcAccessMask = 0; toCopy.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toCopy);
+
+		// copy storage image -> swapchain image
+		VkImageCopy imcopy{}; imcopy.srcOffset = { 0,0,0 }; imcopy.dstOffset = { 0,0,0 }; imcopy.extent = { width, height, 1 }; imcopy.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; imcopy.srcSubresource.layerCount = 1; imcopy.dstSubresource = imcopy.srcSubresource;
+		vkCmdCopyImage(cmd, storage_image, VK_IMAGE_LAYOUT_GENERAL, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imcopy);
+
+		// transition swapchain image to present
+		VkImageMemoryBarrier toPresent = toCopy; toPresent.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; toPresent.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR; toPresent.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; toPresent.dstAccessMask = 0;
+		vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &toPresent);
+
+		vkEndCommandBuffer(cmd);
+
+		VkSubmitInfo submit{ VK_STRUCTURE_TYPE_SUBMIT_INFO }; VkSemaphore waitSem[] = { image_available_semaphore }; VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_TRANSFER_BIT };
+		submit.waitSemaphoreCount = 1; submit.pWaitSemaphores = waitSem; submit.pWaitDstStageMask = waitStages; submit.commandBufferCount = 1; submit.pCommandBuffers = &cmd; VkSemaphore sig[] = { render_finished_semaphore }; submit.signalSemaphoreCount = 1; submit.pSignalSemaphores = sig;
+		vkQueueSubmit(graphics_queue, 1, &submit, VK_NULL_HANDLE);
+
+		VkPresentInfoKHR pi{ VK_STRUCTURE_TYPE_PRESENT_INFO_KHR }; pi.waitSemaphoreCount = 1; pi.pWaitSemaphores = sig; pi.swapchainCount = 1; pi.pSwapchains = &swap_chain; pi.pImageIndices = &image_index;
+		vkQueuePresentKHR(present_queue, &pi);
+		vkQueueWaitIdle(present_queue);
 	}
 }
 

@@ -40,7 +40,8 @@ int main(int argc, char *argv[]) {
         std::cout << "Done. Took " << tick(timer) << " seconds." << std::endl;
         std::cout << "Rendering..." << std::endl;
 		RGFW_window *window = RGFW_createWindow(
-			"LaJolla!", 0, 0, scene->camera.width, scene->camera.height, RGFW_windowCenter);
+			"LaJolla!", 0, 0, scene->camera.width, scene->camera.height,
+            RGFW_windowCenter | RGFW_windowNoResize);
 		gpu_device.attach(window, scene.get());
 		gpu_device.render(window);
 		return 0;
