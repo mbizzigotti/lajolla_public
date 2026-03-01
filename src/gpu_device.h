@@ -32,6 +32,11 @@ struct VulkanAccelerationStructure {
 	void Destroy(struct GPUDevice& gpu);
 };
 
+struct VulkanTriangleMesh {
+	VulkanBuffer vertex_buffer{ 0 };
+	VulkanBuffer index_buffer{ 0 };
+};
+
 #define MAX_SWAP_CHAIN_IMAGES 4 /* For mobile devices, this would need to be higher.. */
 struct GPUDevice {
 	PFN_vkCreateRayTracingPipelinesKHR              vkCreateRayTracingPipelinesKHR             { nullptr };
@@ -76,10 +81,14 @@ struct GPUDevice {
 	VkStridedDeviceAddressRegionKHR rgen_sbt{};
 	VkStridedDeviceAddressRegionKHR miss_sbt{};
 	VkStridedDeviceAddressRegionKHR chit_sbt{};
-	VulkanBuffer                    vertex_buffer{ 0 };
-	VulkanBuffer                    index_buffer{ 0 };
 	VulkanBuffer                    instance_buffer{ 0 };
-
+	VulkanBuffer                    camera_buffer{ 0 };
+	
+	std::vector<VulkanTriangleMesh>                        triangle_meshes;
+	std::vector<VkAccelerationStructureGeometryKHR>        geometries;
+	std::vector< VkAccelerationStructureBuildRangeInfoKHR> build_ranges;
+	std::vector<uint32_t>                                  primitive_counts;
+	
 	struct UniformData
 	{
 		Matrix4x4f view_inverse;
@@ -95,5 +104,49 @@ struct GPUDevice {
 	void render(RGFW_window *window);
 
 private:
+	void add_shape(const Shape &shape);
 
+	uint32_t find_memory_type(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+		VkPhysicalDeviceMemoryProperties memProps;
+		vkGetPhysicalDeviceMemoryProperties(physical_device, &memProps);
+		for (uint32_t i = 0; i < memProps.memoryTypeCount; ++i) {
+			if ((typeFilter & (1 << i)) && (memProps.memoryTypes[i].propertyFlags & properties) == properties)
+				return i;
+		}
+		assert(false && "Failed to find memory type");
+		return 0;
+	}
+
+	void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags props, VkBuffer& buf, VkDeviceMemory& mem) {
+		VkBufferCreateInfo bi{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+		bi.size = size; bi.usage = usage; bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		vkCreateBuffer(device, &bi, nullptr, &buf);
+		VkMemoryRequirements mr; vkGetBufferMemoryRequirements(device, buf, &mr);
+		VkMemoryAllocateInfo ai{ VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO }; ai.allocationSize = mr.size;
+		VkMemoryAllocateFlagsInfo af{ .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO, .flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT };
+		if (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) ai.pNext = &af;
+		ai.memoryTypeIndex = find_memory_type(mr.memoryTypeBits, props);
+		vkAllocateMemory(device, &ai, nullptr, &mem);
+		vkBindBufferMemory(device, buf, mem, 0);
+	};
+
+	VkCommandBuffer temp_command_buffer() {
+		VkCommandBuffer cmd;
+		VkCommandBufferAllocateInfo cba{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+		cba.commandPool = command_pool;
+		cba.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		cba.commandBufferCount = 1;
+		vkAllocateCommandBuffers(device, &cba, &cmd);
+		VkCommandBufferBeginInfo binfo{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+		binfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+		vkBeginCommandBuffer(cmd, &binfo);
+		return cmd;
+	}
+	void flush_and_destroy_command_buffer(VkCommandBuffer cmd) {
+		vkEndCommandBuffer(cmd);
+		VkSubmitInfo si{ VK_STRUCTURE_TYPE_SUBMIT_INFO }; si.commandBufferCount = 1; si.pCommandBuffers = &cmd;
+		vkQueueSubmit(graphics_queue, 1, &si, VK_NULL_HANDLE);
+		vkQueueWaitIdle(graphics_queue);
+		vkFreeCommandBuffers(device, command_pool, 1, &cmd);
+	}
 };

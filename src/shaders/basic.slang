@@ -1,20 +1,12 @@
+#include "camera.slang"
+
 // ------------------------------------------------------------
 // Global Resources
 // ------------------------------------------------------------
 
-[[vk::binding(0)]] RWTexture2D<float4> image;
-[[vk::binding(1)]] RaytracingAccelerationStructure scene;
-
-#if 0
-// Camera parameters
-[[vk::binding(2)]] cbuffer CameraData
-{
-    float4x4 viewInverse;
-    float4x4 projInverse;
-    float3   cameraPosition;
-    float    padding;
-};
-#endif
+[[vk::binding(0)]] RaytracingAccelerationStructure scene;
+[[vk::binding(1)]] RWTexture2D<float4> image;
+[[vk::binding(2)]] ConstantBuffer<Camera> camera;
 
 // ------------------------------------------------------------
 // Payload & Attributes
@@ -22,6 +14,7 @@
 
 struct Payload
 {
+    float3 throughput;
     float3 color;
     uint   hit;
 };
@@ -36,25 +29,18 @@ struct HitAttributes
 // ------------------------------------------------------------
 
 [shader("raygeneration")]
-void main()
+void rgen()
 {
-    uint2 pixelIndex = DispatchRaysIndex().xy;
-    uint2 dims       = DispatchRaysDimensions().xy;
+    uint2 pixel_index = DispatchRaysIndex().xy;
+    uint2 dimensions = DispatchRaysDimensions().xy;
 
-    float2 uv = float2(pixelIndex) / float2(dims);
-
-    RayDesc rayDesc;
-    rayDesc.Origin = float3(0, 0, 0);
-    rayDesc.Direction = normalize(float3(uv, 3));
-    rayDesc.TMin = 0.001;
-    rayDesc.TMax = 10000.0;
+    RayDesc ray = camera.sample_primary(float2(pixel_index) / float2(dimensions));
 
     Payload payload;
-    payload.color = float3(uv, 0.0);
-	
-    TraceRay(scene, RAY_FLAG_FORCE_OPAQUE, 0xff, 0, 0, 0, rayDesc, payload);
-
-    image.Store(pixelIndex, float4(payload.color, 1.0));
+    payload.throughput = float3(1.0);
+    payload.color = float3(0.0);
+    TraceRay(scene, 0, 0xff, 0, 0, 0, ray, payload);
+    image.Store(pixel_index, float4(payload.color, 1));
 }
 
 // ------------------------------------------------------------
@@ -62,7 +48,7 @@ void main()
 // ------------------------------------------------------------
 
 [shader("miss")]
-void main(inout Payload payload)
+void miss(inout Payload payload)
 {
     payload.color = float3(0.1, 0.1, 0.3); // sky color
 }
@@ -72,7 +58,7 @@ void main(inout Payload payload)
 // ------------------------------------------------------------
 
 [shader("closesthit")]
-void main(inout Payload payload, in HitAttributes attr)
+void chit(inout Payload payload, in HitAttributes attr)
 {
     float3 bary = float3(
         1.0 - attr.barycentrics.x - attr.barycentrics.y,
