@@ -39,7 +39,8 @@ struct GPUDevice {
 	VkSurfaceKHR       surface{ 0 };
 	VkPhysicalDevice   physical_device{ 0 };
 	VkDevice           device{ 0 };
-	VkQueue            queue{ 0 };
+	VkQueue            graphics_queue{ 0 };
+	VkQueue            present_queue{ 0 };
 	VkSwapchainKHR     swap_chain{ 0 };
 	VkFormat           format{ VK_FORMAT_UNDEFINED };
 	VkExtent2D         image_extent{ 0 };

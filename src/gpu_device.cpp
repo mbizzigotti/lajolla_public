@@ -65,6 +65,7 @@ GPUDevice::GPUDevice()
 
 GPUDevice::~GPUDevice()
 {
+	if (device) vkDestroyDevice(device, 0);
 	if (surface) vkDestroySurfaceKHR(instance, surface, 0);
 	if (instance) vkDestroyInstance(instance, 0);
 }
@@ -78,21 +79,20 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 	LOG("Picking a Physical Device that supports ray tracing...");
 	{
 		uint32_t device_count = 0;
-		assert(vkEnumeratePhysicalDevices(instance, &device_count, nullptr) == VK_SUCCESS);
+		assert(vkEnumeratePhysicalDevices(instance, &device_count, 0) == VK_SUCCESS);
 		assert(device_count > 0);
 		std::vector<VkPhysicalDevice> devices(device_count);
 		assert(vkEnumeratePhysicalDevices(instance, &device_count, devices.data()) == VK_SUCCESS);
 
-		VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 		QueueFamilyIndices indices;
 		for (auto dev : devices) {
 			indices = findQueueFamilies(dev, surface);
 			if (!indices.isComplete()) continue;
 			// check for ray tracing device extensions
 			uint32_t extCount = 0;
-			vkEnumerateDeviceExtensionProperties(dev, nullptr, &extCount, nullptr);
+			vkEnumerateDeviceExtensionProperties(dev, 0, &extCount, 0);
 			std::vector<VkExtensionProperties> exts(extCount);
-			vkEnumerateDeviceExtensionProperties(dev, nullptr, &extCount, exts.data());
+			vkEnumerateDeviceExtensionProperties(dev, 0, &extCount, exts.data());
 			bool ok = true;
 			const std::vector<const char*> required = {
 				VK_KHR_SWAPCHAIN_EXTENSION_NAME,
@@ -107,11 +107,72 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 				for (auto& e : exts) if (strcmp(e.extensionName, r) == 0) { found = true; break; }
 				if (!found) { ok = false; break; }
 			}
-			if (ok) { physicalDevice = dev; break; }
+			if (ok) { physical_device = dev; break; }
 		}
-		if (physicalDevice == VK_NULL_HANDLE) {
+		if (physical_device == VK_NULL_HANDLE) {
 			ERROR("No physical device with ray tracing support found.");
 		}
+	
+		LOG("Creating Logical Device...");
+
+		VkPhysicalDeviceFeatures2                        device_features                 { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
+		VkPhysicalDeviceBufferDeviceAddressFeatures      device_address_features         { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES };
+		VkPhysicalDeviceAccelerationStructureFeaturesKHR acceleration_structure_features { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR };
+		VkPhysicalDeviceRayTracingPipelineFeaturesKHR    ray_tracing_features            { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR };
+
+		device_features                 .pNext = &device_address_features;
+		device_address_features         .pNext = &acceleration_structure_features;
+		acceleration_structure_features .pNext = &ray_tracing_features;
+
+		auto vkGetPhysicalDeviceFeatures2 = (PFN_vkGetPhysicalDeviceFeatures2)vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceFeatures2");
+		assert(vkGetPhysicalDeviceFeatures2);
+		vkGetPhysicalDeviceFeatures2(physical_device, &device_features);
+
+		// request enabling of required features (if supported)
+		device_address_features.bufferDeviceAddress = VK_TRUE;
+		acceleration_structure_features.accelerationStructure = VK_TRUE;
+		ray_tracing_features.rayTracingPipeline = VK_TRUE;
+
+		// Create logical device with queues and feature pNext
+		float priority = 1.0f;
+		uint32_t queue_count = 0;
+		VkDeviceQueueCreateInfo queue_infos[2];
+
+		auto add_queue_family = [&](uint32_t index) {
+			queue_infos[queue_count++] = VkDeviceQueueCreateInfo{
+				.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+				.queueFamilyIndex = index,
+				.queueCount = 1,
+				.pQueuePriorities = &priority,
+			};
+		};
+
+		add_queue_family(indices.graphicsFamily.value());
+		if (indices.presentFamily.value() != indices.graphicsFamily.value())
+			add_queue_family(indices.presentFamily.value());
+
+		const char* extensions[] = {
+			VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+			VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
+			VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
+			VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
+			VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
+			VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME,
+		};
+
+		VkDeviceCreateInfo device_info {
+			.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+			.pNext = &device_features,
+			.queueCreateInfoCount = queue_count,
+			.pQueueCreateInfos = queue_infos,
+			.enabledExtensionCount = (uint32_t)std::size(extensions),
+			.ppEnabledExtensionNames = extensions,
+		};
+		assert(vkCreateDevice(physical_device, &device_info, 0, &device) == VK_SUCCESS);
+
+		vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphics_queue);
+		vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &present_queue);
+
 	}
 	LOG("TODO");
 }
