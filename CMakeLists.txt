@@ -17,6 +17,39 @@ endif()
 
 find_package(Embree REQUIRED)
 find_package(Vulkan REQUIRED)
+
+# Compile GLSL ray tracing shaders to SPIR-V using glslangValidator (from Vulkan SDK)
+find_program(GLSLANG_VALIDATOR glslangValidator)
+if(NOT GLSLANG_VALIDATOR)
+	message(FATAL_ERROR "glslangValidator not found. Install Vulkan SDK or add glslangValidator to PATH.")
+endif()
+
+set(SHADER_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
+set(SPIRV_OUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/shaders)
+file(MAKE_DIRECTORY ${SPIRV_OUT_DIR})
+
+set(RGEN ${SPIRV_OUT_DIR}/raygen.spv)
+set(MISS ${SPIRV_OUT_DIR}/miss.spv)
+set(CHIT ${SPIRV_OUT_DIR}/chit.spv)
+
+add_custom_command(OUTPUT ${RGEN}
+	COMMAND ${GLSLANG_VALIDATOR} --target-env vulkan1.3 -V -o ${RGEN} ${SHADER_SRC_DIR}/raygen.rgen
+	DEPENDS ${SHADER_SRC_DIR}/raygen.rgen
+	COMMENT "Compiling raygen.rgen -> raygen.spv"
+)
+add_custom_command(OUTPUT ${MISS}
+	COMMAND ${GLSLANG_VALIDATOR} --target-env vulkan1.3 -V -o ${MISS} ${SHADER_SRC_DIR}/miss.rmiss
+	DEPENDS ${SHADER_SRC_DIR}/miss.rmiss
+	COMMENT "Compiling miss.rmiss -> miss.spv"
+)
+add_custom_command(OUTPUT ${CHIT}
+	COMMAND ${GLSLANG_VALIDATOR} --target-env vulkan1.3 -V -o ${CHIT} ${SHADER_SRC_DIR}/chit.rchit
+	DEPENDS ${SHADER_SRC_DIR}/chit.rchit
+	COMMENT "Compiling chit.rchit -> chit.spv"
+)
+
+add_custom_target(ShadersSPV ALL DEPENDS ${RGEN} ${MISS} ${CHIT})
+
 include_directories(${EMBREE_INCLUDE_PATH})
 link_libraries(${EMBREE_LIBRARY} Vulkan::Vulkan)
 
@@ -119,6 +152,15 @@ if(MSVC)
       "${PROJECT_SOURCE_DIR}/embree/bin"
       $<TARGET_FILE_DIR:lajolla>)
 endif()
+
+# Copy compiled SPIR-V next to executable for runtime loading
+add_custom_command(TARGET lajolla POST_BUILD
+	COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:lajolla>/shaders
+	COMMAND ${CMAKE_COMMAND} -E copy ${RGEN} $<TARGET_FILE_DIR:lajolla>/shaders/
+	COMMAND ${CMAKE_COMMAND} -E copy ${MISS} $<TARGET_FILE_DIR:lajolla>/shaders/
+	COMMAND ${CMAKE_COMMAND} -E copy ${CHIT} $<TARGET_FILE_DIR:lajolla>/shaders/
+)
+add_dependencies(lajolla ShadersSPV)
 
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)

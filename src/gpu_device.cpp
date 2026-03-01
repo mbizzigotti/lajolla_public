@@ -1,4 +1,5 @@
 ﻿#include "gpu_device.h"
+#include <fstream>
 
 #ifdef ERROR
 #undef ERROR
@@ -31,6 +32,40 @@ QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device, VkSurfaceKHR surfa
 	return indices;
 }
 
+VkExtent3D extent3d(VkExtent2D extent2d) {
+	return { extent2d.width, extent2d.height, 1 };
+}
+
+uint32_t find_memory_type(VkPhysicalDevice phys, uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+	VkPhysicalDeviceMemoryProperties memProps;
+	vkGetPhysicalDeviceMemoryProperties(phys, &memProps);
+	for (uint32_t i = 0; i < memProps.memoryTypeCount; ++i) {
+		if ((typeFilter & (1 << i)) && (memProps.memoryTypes[i].propertyFlags & properties) == properties)
+			return i;
+	}
+	assert(false && "Failed to find memory type");
+	return 0;
+}
+
+static VkShaderModule load_shader_from_file(VkDevice device, const char* path) {
+	LOG(" ... \"%s\"", path);
+	std::ifstream file(path, std::ios::binary | std::ios::ate);
+	assert(file && "Failed to open shader file");
+	size_t size = (size_t)file.tellg();
+	std::vector<char> buf(size);
+	file.seekg(0);
+	file.read(buf.data(), size);
+
+	VkShaderModuleCreateInfo shader_info {
+		.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, 
+		.codeSize = buf.size(),
+		.pCode = reinterpret_cast<const uint32_t*>(buf.data()),
+	};
+	VkShaderModule shader{ 0 };
+	assert(vkCreateShaderModule(device, &shader_info, 0, &shader) == VK_SUCCESS);
+	return shader;
+}
+
 GPUDevice::GPUDevice()
 {
 	LOG("Creating Vulkan Instance...");
@@ -41,7 +76,7 @@ GPUDevice::GPUDevice()
 			.applicationVersion = VK_MAKE_API_VERSION(1, 0, 0, 1),
 			.pEngineName = "🏄‍♂️",
 			.engineVersion = VK_MAKE_API_VERSION(1, 0, 0, 1),
-			.apiVersion = VK_API_VERSION_1_2,
+			.apiVersion = VK_API_VERSION_1_3,
 		};
 
 		const char* extensions[] = {
@@ -67,6 +102,9 @@ GPUDevice::GPUDevice()
 
 GPUDevice::~GPUDevice()
 {
+	if (storage_view) vkDestroyImageView(device, storage_view, 0);
+	if (storage_image) vkDestroyImage(device, storage_image, 0);
+	if (storage_memory) vkFreeMemory(device, storage_memory, 0);
 	if (render_finished_semaphore) vkDestroySemaphore(device, render_finished_semaphore, 0);
 	if (image_available_semaphore) vkDestroySemaphore(device, image_available_semaphore, 0);
 	if (command_pool) vkDestroyCommandPool(device, command_pool, 0);
@@ -208,7 +246,7 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 		VkSurfaceFormatKHR surfaceFormat = formats[0];
 		swap_format = surfaceFormat.format;
 
-		VkExtent2D extent = { (uint32_t)scene->camera.width, (uint32_t)scene->camera.height };
+		image_extent = { (uint32_t)scene->camera.width, (uint32_t)scene->camera.height };
 		uint32_t imageCount = capabilities.minImageCount + 1;
 		if (capabilities.maxImageCount > 0 && imageCount > capabilities.maxImageCount)
 			imageCount = capabilities.maxImageCount;
@@ -220,7 +258,7 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 			.minImageCount = imageCount,
 			.imageFormat = surfaceFormat.format,
 			.imageColorSpace = surfaceFormat.colorSpace,
-			.imageExtent = extent,
+			.imageExtent = image_extent,
 			.imageArrayLayers = 1,
 			.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
 			.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
@@ -273,6 +311,57 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 		vkCreateSemaphore(device, &semaphore_info, nullptr, &image_available_semaphore);
 		vkCreateSemaphore(device, &semaphore_info, nullptr, &render_finished_semaphore);
 	}
+	LOG("Creating Storage Image...");
+	{
+		VkImageCreateInfo imgInfo{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+			.imageType = VK_IMAGE_TYPE_2D,
+			.format = VK_FORMAT_R8G8B8A8_UNORM,
+			.extent = extent3d(image_extent),
+			.mipLevels = 1,
+			.arrayLayers = 1,
+			.samples = VK_SAMPLE_COUNT_1_BIT,
+			.tiling = VK_IMAGE_TILING_OPTIMAL,
+			.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+			.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+		};
+		assert(vkCreateImage(device, &imgInfo, nullptr, &storage_image) == VK_SUCCESS);
+		
+		VkMemoryRequirements memReq;
+		vkGetImageMemoryRequirements(device, storage_image, &memReq);
+		
+		VkMemoryAllocateInfo ainfo { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+		ainfo.allocationSize = memReq.size;
+		ainfo.memoryTypeIndex = find_memory_type(physical_device, memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+		vkAllocateMemory(device, &ainfo, nullptr, &storage_memory);
+		vkBindImageMemory(device, storage_image, storage_memory, 0);
+
+		VkImageViewCreateInfo siv{}; siv.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+		siv.image = storage_image; siv.viewType = VK_IMAGE_VIEW_TYPE_2D; siv.format = VK_FORMAT_R8G8B8A8_UNORM;
+		siv.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; siv.subresourceRange.baseMipLevel = 0; siv.subresourceRange.levelCount = 1;
+		siv.subresourceRange.baseArrayLayer = 0; siv. subresourceRange.layerCount = 1;
+		vkCreateImageView(device, &siv, nullptr, &storage_view);
+	}
+
+	VkShaderModule shader_rgen{ 0 };
+	VkShaderModule shader_miss{ 0 };
+	VkShaderModule shader_chit{ 0 };
+
+	LOG("Loading Shaders...");
+	{
+		shader_rgen = load_shader_from_file(device, "shaders/raygen.spv");
+		shader_miss = load_shader_from_file(device, "shaders/miss.spv");
+		shader_chit = load_shader_from_file(device, "shaders/chit.spv");
+	}
+	LOG("Creating Ray Tracing Pipeline...");
+	{
+
+	}
+
+	vkDestroyShaderModule(device, shader_rgen, 0);
+	vkDestroyShaderModule(device, shader_miss, 0);
+	vkDestroyShaderModule(device, shader_chit, 0);
+
 	LOG("TODO");
 }
 
