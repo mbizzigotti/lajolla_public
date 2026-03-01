@@ -72,10 +72,10 @@ struct GPUDevice {
 	VkPipeline                      pipeline{ 0 };
 	VulkanAccelerationStructure     bas{};
 	VulkanAccelerationStructure     tas{};
-	VulkanBuffer                    sbt_raygen{ 0 };
-	VulkanBuffer                    sbt_miss{ 0 };
-	VulkanBuffer                    sbt_hit{ 0 };
-	VkStridedDeviceAddressRegionKHR shader_binding_tables[SHADER_COUNT]{ 0 };
+	VulkanBuffer                    sbt_buffer{ 0 };
+	VkStridedDeviceAddressRegionKHR rgen_sbt{};
+	VkStridedDeviceAddressRegionKHR miss_sbt{};
+	VkStridedDeviceAddressRegionKHR chit_sbt{};
 	VulkanBuffer                    vertex_buffer{ 0 };
 	VulkanBuffer                    index_buffer{ 0 };
 	VulkanBuffer                    instance_buffer{ 0 };

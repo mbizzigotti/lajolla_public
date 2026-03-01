@@ -103,9 +103,11 @@ GPUDevice::GPUDevice()
 GPUDevice::~GPUDevice()
 {
 	if (device) vkDeviceWaitIdle(device);
+	if (descriptor_pool) vkDestroyDescriptorPool(device, descriptor_pool, 0);
 	instance_buffer.Destroy(device);
 	vertex_buffer.Destroy(device);
 	index_buffer.Destroy(device);
+	sbt_buffer.Destroy(device);
 	tas.Destroy(*this);
 	bas.Destroy(*this);
 	if (pipeline) vkDestroyPipeline(device, pipeline, 0);
@@ -441,22 +443,22 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 	vkDestroyShaderModule(device, shader_miss, 0);
 	vkDestroyShaderModule(device, shader_chit, 0);
 
+	// Helper to create buffer + memory
+	auto createBuffer = [&](VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags props, VkBuffer& buf, VkDeviceMemory& mem) {
+		VkBufferCreateInfo bi{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+		bi.size = size; bi.usage = usage; bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		vkCreateBuffer(device, &bi, nullptr, &buf);
+		VkMemoryRequirements mr; vkGetBufferMemoryRequirements(device, buf, &mr);
+		VkMemoryAllocateInfo ai{ VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO }; ai.allocationSize = mr.size;
+		VkMemoryAllocateFlagsInfo af{ .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO, .flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT };
+		if (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) ai.pNext = &af;
+		ai.memoryTypeIndex = find_memory_type(physical_device, mr.memoryTypeBits, props);
+		vkAllocateMemory(device, &ai, nullptr, &mem);
+		vkBindBufferMemory(device, buf, mem, 0);
+	};
+
 	LOG("Creating Acceleration Structures...");
 	{
-		// Helper to create buffer + memory
-		auto createBuffer = [&](VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags props, VkBuffer& buf, VkDeviceMemory& mem) {
-			VkBufferCreateInfo bi{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
-			bi.size = size; bi.usage = usage; bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-			vkCreateBuffer(device, &bi, nullptr, &buf);
-			VkMemoryRequirements mr; vkGetBufferMemoryRequirements(device, buf, &mr);
-			VkMemoryAllocateInfo ai{ VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO }; ai.allocationSize = mr.size;
-			VkMemoryAllocateFlagsInfo af{ .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO, .flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT };
-			if (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) ai.pNext = &af;
-			ai.memoryTypeIndex = find_memory_type(physical_device, mr.memoryTypeBits, props);
-			vkAllocateMemory(device, &ai, nullptr, &mem);
-			vkBindBufferMemory(device, buf, mem, 0);
-		};
-
 		// Create vertex and index buffers for a single triangle
 		struct Vertex { float x, y, z; };
 		Vertex verts[3] = { {-0.5f,-0.5f,2.0f}, {0.5f,-0.5f,2.0f}, {0.0f,0.5f,2.0f} };
@@ -613,6 +615,53 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 		vkDestroyBuffer(device, tscratch, 0);
 		vkFreeMemory(device, tscratchMem, 0);
 	}
+	LOG("Creating Shader Binding Table...");
+	{
+		VkPhysicalDeviceProperties2 pdprops{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
+		VkPhysicalDeviceRayTracingPipelinePropertiesKHR rtprops{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR };
+		pdprops.pNext = &rtprops;
+		vkGetPhysicalDeviceProperties2(physical_device, &pdprops);
+		uint32_t handleSize = rtprops.shaderGroupHandleSize;
+		uint32_t baseAlignment = rtprops.shaderGroupBaseAlignment;
+
+		uint32_t groupCount = 3;
+		std::vector<char> shaderHandleStorage(groupCount * handleSize);
+		vkGetRayTracingShaderGroupHandlesKHR(device, pipeline, 0, groupCount, shaderHandleStorage.size(), shaderHandleStorage.data());
+
+		// create SBT buffer (host visible)
+		VkDeviceSize sbtSize = groupCount * baseAlignment;
+		createBuffer(sbtSize, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, sbt_buffer.buffer, sbt_buffer.memory);
+		void* sbtMap; vkMapMemory(device, sbt_buffer.memory, 0, sbtSize, 0, &sbtMap);
+		for (uint32_t g = 0; g < groupCount; ++g) {
+			memcpy(reinterpret_cast<char*>(sbtMap) + g * baseAlignment, shaderHandleStorage.data() + g * handleSize, handleSize);
+		}
+		vkUnmapMemory(device, sbt_buffer.memory);
+		VkBufferDeviceAddressInfo sbtAddrInfo{ VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO }; sbtAddrInfo.buffer = sbt_buffer; VkDeviceAddress sbtAddr = vkGetBufferDeviceAddress(device, &sbtAddrInfo);
+
+		rgen_sbt = { .deviceAddress = sbtAddr + 0 * baseAlignment, .stride = baseAlignment, .size = baseAlignment };
+		miss_sbt = { .deviceAddress = sbtAddr + 1 * baseAlignment, .stride = baseAlignment, .size = baseAlignment };
+		chit_sbt = { .deviceAddress = sbtAddr + 2 * baseAlignment, .stride = baseAlignment, .size = baseAlignment };
+	}
+	LOG("Creating Descriptor Set...");
+	{
+		// Descriptor pool and set
+		VkDescriptorPoolSize poolSizes[2]; poolSizes[0].type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR; poolSizes[0].descriptorCount = 1; poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; poolSizes[1].descriptorCount = 1;
+		VkDescriptorPoolCreateInfo dpc{ VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO }; dpc.maxSets = 1; dpc.poolSizeCount = 2; dpc.pPoolSizes = poolSizes;
+		assert(vkCreateDescriptorPool(device, &dpc, 0, &descriptor_pool) == VK_SUCCESS);
+		VkDescriptorSetAllocateInfo dsa{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO }; dsa.descriptorPool = descriptor_pool; dsa.descriptorSetCount = 1; dsa.pSetLayouts = &descriptor_set_layout;
+		assert(vkAllocateDescriptorSets(device, &dsa, &descriptor_set) == VK_SUCCESS);
+
+		// Update descriptor with TLAS
+		VkWriteDescriptorSetAccelerationStructureKHR asWrite{ VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR }; asWrite.accelerationStructureCount = 1; VkAccelerationStructureKHR asList[] = { tas.handle }; asWrite.pAccelerationStructures = asList;
+		VkWriteDescriptorSet wds{ VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }; wds.dstSet = descriptor_set; wds.dstBinding = 0; wds.descriptorCount = 1; wds.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR; wds.pNext = &asWrite;
+
+		// Update storage image descriptor
+		VkDescriptorImageInfo dii{}; dii.imageLayout = VK_IMAGE_LAYOUT_GENERAL; dii.imageView = storage_view; dii.sampler = VK_NULL_HANDLE;
+		VkWriteDescriptorSet wds2{ VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET }; wds2.dstSet = descriptor_set; wds2.dstBinding = 1; wds2.descriptorCount = 1; wds2.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; wds2.pImageInfo = &dii;
+
+		VkWriteDescriptorSet writes[] = { wds, wds2 };
+		vkUpdateDescriptorSets(device, (uint32_t)std::size(writes), writes, 0, 0);
+	}
 }
 
 void GPUDevice::render(RGFW_window* window)
@@ -621,6 +670,8 @@ void GPUDevice::render(RGFW_window* window)
 	while (!RGFW_window_shouldClose(window))
 	{
 		RGFW_pollEvents();
+
+		VkStridedDeviceAddressRegionKHR callableSBT{};
 	}
 }
 
