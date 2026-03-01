@@ -67,6 +67,9 @@ GPUDevice::GPUDevice()
 
 GPUDevice::~GPUDevice()
 {
+	if (render_finished_semaphore) vkDestroySemaphore(device, render_finished_semaphore, 0);
+	if (image_available_semaphore) vkDestroySemaphore(device, image_available_semaphore, 0);
+	if (command_pool) vkDestroyCommandPool(device, command_pool, 0);
 	for (int i = 0; i < image_count; ++i) {
 		vkDestroyImageView(device, image_views[i], 0);
 	}
@@ -256,6 +259,19 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 			view_info.image = images[i];
 			assert(vkCreateImageView(device, &view_info, 0, &image_views[i]) == VK_SUCCESS);
 		}
+	}
+	LOG("Creating Command Pool and Sync. Primitives...");
+	{
+		VkCommandPoolCreateInfo pool_info {
+			.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+			.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+			.queueFamilyIndex = indices.graphicsFamily.value(),
+		};
+		assert(vkCreateCommandPool(device, &pool_info, 0, &command_pool) == VK_SUCCESS);
+
+		VkSemaphoreCreateInfo semaphore_info { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+		vkCreateSemaphore(device, &semaphore_info, nullptr, &image_available_semaphore);
+		vkCreateSemaphore(device, &semaphore_info, nullptr, &render_finished_semaphore);
 	}
 	LOG("TODO");
 }
