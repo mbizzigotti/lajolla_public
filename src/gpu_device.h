@@ -13,66 +13,83 @@ enum {
 	SHADER_COUNT,
 };
 
-#define MAX_FRAMES_IN_FLIGHT  2
+struct VulkanBuffer {
+	VkBuffer       buffer{ 0 };
+	VkDeviceMemory memory{ 0 };
+
+	operator VkBuffer() { return buffer; }
+
+	void Create(struct GPUDevice &gpu, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memory_flags);
+	void Destroy(VkDevice device);
+};
+
 #define MAX_SWAP_CHAIN_IMAGES 4 /* For mobile devices, this would need to be higher.. */
 struct GPUDevice {
-	PFN_vkCreateRayTracingPipelinesKHR       vkCreateRayTracingPipelinesKHR;
-	PFN_vkCmdTraceRaysKHR                    vkCmdTraceRaysKHR;
-	PFN_vkGetBufferDeviceAddressKHR          vkGetBufferDeviceAddressKHR;
-	PFN_vkGetRayTracingShaderGroupHandlesKHR vkGetRayTracingShaderGroupHandlesKHR;
+	PFN_vkCreateRayTracingPipelinesKHR              vkCreateRayTracingPipelinesKHR             { nullptr };
+	PFN_vkCmdTraceRaysKHR                           vkCmdTraceRaysKHR                          { nullptr };
+	PFN_vkGetBufferDeviceAddressKHR                 vkGetBufferDeviceAddressKHR                { nullptr };
+	PFN_vkGetRayTracingShaderGroupHandlesKHR        vkGetRayTracingShaderGroupHandlesKHR       { nullptr };
+	PFN_vkCreateAccelerationStructureKHR            vkCreateAccelerationStructureKHR           { nullptr };
+	PFN_vkDestroyAccelerationStructureKHR           vkDestroyAccelerationStructureKHR          { nullptr };
+	PFN_vkCmdBuildAccelerationStructuresKHR         vkCmdBuildAccelerationStructuresKHR        { nullptr };
+	PFN_vkGetAccelerationStructureDeviceAddressKHR  vkGetAccelerationStructureDeviceAddressKHR { nullptr };
+	PFN_vkGetAccelerationStructureBuildSizesKHR     vkGetAccelerationStructureBuildSizesKHR    { nullptr };
 
-	VkInstance         instance;
-	VkSurfaceKHR       surface;
-	VkPhysicalDevice   physical_device;
-	VkDevice           device;
-	VkQueue            queue;
-	VkSwapchainKHR     swap_chain;
-	VkFormat           format;
-	VkExtent2D         image_extent;
-	VkCommandPool      command_pool;
-	VkCommandBuffer    command_buffers[MAX_FRAMES_IN_FLIGHT];
-	uint32_t           image_count;
-	VkImage            images[MAX_SWAP_CHAIN_IMAGES];
-	VkImageView        image_views[MAX_SWAP_CHAIN_IMAGES];
-	VkSemaphore        image_ready_semaphores[MAX_FRAMES_IN_FLIGHT];    // Signaled when image is ready to be rendered to
-	VkSemaphore        present_ready_semaphores[MAX_SWAP_CHAIN_IMAGES]; // Signaled when image is ready to be presented
-	VkFence            fences[MAX_FRAMES_IN_FLIGHT];
+	VkInstance         instance{ 0 };
+	VkSurfaceKHR       surface{ 0 };
+	VkPhysicalDevice   physical_device{ 0 };
+	VkDevice           device{ 0 };
+	VkQueue            queue{ 0 };
+	VkSwapchainKHR     swap_chain{ 0 };
+	VkFormat           format{ VK_FORMAT_UNDEFINED };
+	VkExtent2D         image_extent{ 0 };
+	VkCommandPool      command_pool{ 0 };
+	VkCommandBuffer    command_buffer{ 0 };
+	uint32_t           image_count{ 0 };
+	VkImage            images[MAX_SWAP_CHAIN_IMAGES]{ 0 };
+	VkImageView        image_views[MAX_SWAP_CHAIN_IMAGES]{ 0 };
+	VkSemaphore        render_finished_semaphore{ 0 };
+	VkSemaphore        image_available_semaphore{ 0 };
+	VkFence            fence{ 0 };
+	VkDeviceMemory     storage_memory{ 0 };
+	VkImage            storage_image{ 0 };
+	VkImageView        storage_view{ 0 };
 
 	struct AccelerationStructure
 	{
 		VkAccelerationStructureKHR handle;
 		VkDeviceAddress            device_address;
-		VkBuffer                   buffer;
+		VulkanBuffer               buffer;
 	};
 
-	VkDescriptorPool      descriptor_pool;
-	VkDescriptorSet       descriptor_set;
-	VkDescriptorSetLayout descriptor_set_layout;
-	VkPipelineLayout      pipeline_layout;
-	VkPipeline            pipeline;
+	VkDescriptorPool      descriptor_pool{ 0 };
+	VkDescriptorSet       descriptor_set{ 0 };
+	VkDescriptorSetLayout descriptor_set_layout{ 0 };
+	VkPipelineLayout      pipeline_layout{ 0 };
+	VkPipeline            pipeline{ 0 };
 
-	AccelerationStructure           bottom_level_acceleration_structure{};
-	AccelerationStructure           top_level_acceleration_structure{};
-	VkBuffer                        sbt_buffer;
-	VkDeviceMemory                  sbt_memory;
-	VkStridedDeviceAddressRegionKHR shader_binding_tables[SHADER_COUNT];
+	AccelerationStructure           bas{}, tas{};
+	VulkanBuffer                    sbt_raygen{ 0 };
+	VulkanBuffer                    sbt_miss{ 0 };
+	VulkanBuffer                    sbt_hit{ 0 };
+	VkStridedDeviceAddressRegionKHR shader_binding_tables[SHADER_COUNT]{ 0 };
 
 	struct UniformData
 	{
 		Matrix4x4f view_inverse;
 		Matrix4x4f proj_inverse;
-	} uniform_data;
+	} uniform_data{};
 
-	VkBuffer ubo;
+	VulkanBuffer vertex_buffer{ 0 };
+	VulkanBuffer index_buffer{ 0 };
+	VkBuffer ubo{ 0 };
 
 	GPUDevice();
+	~GPUDevice();
 
-	void attach(RGFW_window *window);
-	void render(RGFW_window *window, Scene& scene);
-	void build_acceleration_structure();
+	void attach(RGFW_window *window, Scene *scene);
+	void render(RGFW_window *window);
 
 private:
-	void create_buffer(VkBuffer *buffer, VkDeviceMemory *memory, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memory_flags);
-	uint32_t find_memory_type(uint32_t type_filter, uint32_t desired_flags);
-	VkDeviceAddress get_device_address(VkBuffer buffer);
+
 };

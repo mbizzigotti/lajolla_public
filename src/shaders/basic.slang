@@ -20,7 +20,7 @@
 // Payload & Attributes
 // ------------------------------------------------------------
 
-struct RayPayload
+struct Payload
 {
     float3 color;
     uint   hit;
@@ -43,7 +43,18 @@ void main()
 
     float2 uv = float2(pixelIndex) / float2(dims);
 
-    image.Store(pixelIndex, float4(uv, 0.0, 1.0));
+    RayDesc rayDesc;
+    rayDesc.Origin = float3(0, 0, 0);
+    rayDesc.Direction = normalize(float3(uv, 3));
+    rayDesc.TMin = 0.001;
+    rayDesc.TMax = 10000.0;
+
+    Payload payload;
+    payload.color = float3(uv, 0.0);
+	
+    TraceRay(scene, RAY_FLAG_FORCE_OPAQUE, 0xff, 0, 0, 0, rayDesc, payload);
+
+    image.Store(pixelIndex, float4(payload.color, 1.0));
 }
 
 // ------------------------------------------------------------
@@ -51,7 +62,7 @@ void main()
 // ------------------------------------------------------------
 
 [shader("miss")]
-void main(inout RayPayload payload)
+void main(inout Payload payload)
 {
     payload.color = float3(0.1, 0.1, 0.3); // sky color
 }
@@ -61,7 +72,7 @@ void main(inout RayPayload payload)
 // ------------------------------------------------------------
 
 [shader("closesthit")]
-void main(inout RayPayload payload, in HitAttributes attr)
+void main(inout Payload payload, in HitAttributes attr)
 {
     float3 bary = float3(
         1.0 - attr.barycentrics.x - attr.barycentrics.y,

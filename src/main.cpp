@@ -41,8 +41,8 @@ int main(int argc, char *argv[]) {
         std::cout << "Rendering..." << std::endl;
 		RGFW_window *window = RGFW_createWindow(
 			"LaJolla!", 0, 0, scene->camera.width, scene->camera.height, RGFW_windowCenter);
-		gpu_device.attach(window);
-		gpu_device.render(window, *scene);
+		gpu_device.attach(window, scene.get());
+		gpu_device.render(window);
 		return 0;
 	}
 
