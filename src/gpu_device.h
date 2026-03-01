@@ -87,7 +87,7 @@ struct GPUDevice {
 	GPUDevice();
 	~GPUDevice();
 
-	void attach(RGFW_window *window, Scene *scene);
+	void attach(RGFW_window* window, Scene *scene);
 	void render(RGFW_window *window);
 
 private:
