@@ -67,6 +67,9 @@ GPUDevice::GPUDevice()
 
 GPUDevice::~GPUDevice()
 {
+	for (int i = 0; i < image_count; ++i) {
+		vkDestroyImageView(device, image_views[i], 0);
+	}
 	if (swap_chain) vkDestroySwapchainKHR(device, swap_chain, 0);
 	if (device) vkDestroyDevice(device, 0);
 	if (surface) vkDestroySurfaceKHR(instance, surface, 0);
@@ -119,7 +122,6 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 	}
 	LOG("Creating Logical Device...");
 	{
-
 		VkPhysicalDeviceFeatures2                        device_features                 { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
 		VkPhysicalDeviceBufferDeviceAddressFeatures      device_address_features         { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES };
 		VkPhysicalDeviceAccelerationStructureFeaturesKHR acceleration_structure_features { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR };
@@ -201,6 +203,7 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 		std::vector<VkSurfaceFormatKHR> formats(format_count);
 		vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &format_count, formats.data());
 		VkSurfaceFormatKHR surfaceFormat = formats[0];
+		swap_format = surfaceFormat.format;
 
 		VkExtent2D extent = { (uint32_t)scene->camera.width, (uint32_t)scene->camera.height };
 		uint32_t imageCount = capabilities.minImageCount + 1;
@@ -216,7 +219,7 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 			.imageColorSpace = surfaceFormat.colorSpace,
 			.imageExtent = extent,
 			.imageArrayLayers = 1,
-			.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+			.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
 			.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
 			.preTransform = capabilities.currentTransform,
 			.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
@@ -228,7 +231,31 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 			swap_chain_info.queueFamilyIndexCount = 2;
 			swap_chain_info.pQueueFamilyIndices = families;
 		}
-		assert(vkCreateSwapchainKHR(device, &swap_chain_info, nullptr, &swap_chain) == VK_SUCCESS);
+		assert(vkCreateSwapchainKHR(device, &swap_chain_info, 0, &swap_chain) == VK_SUCCESS);
+	}
+	LOG("Creating Swap Chain Image Views...");
+	{
+		assert(vkGetSwapchainImagesKHR(device, swap_chain, &image_count, 0) == VK_SUCCESS);
+		assert(image_count > 0);
+		assert(image_count <= MAX_SWAP_CHAIN_IMAGES);
+		assert(vkGetSwapchainImagesKHR(device, swap_chain, &image_count, images) == VK_SUCCESS);
+
+		VkImageViewCreateInfo view_info {
+			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+			.viewType = VK_IMAGE_VIEW_TYPE_2D,
+			.format = swap_format,
+			.subresourceRange = {
+				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+				.baseMipLevel = 0,
+				.levelCount = 1,
+				.baseArrayLayer = 0,
+				.layerCount = 1,
+			},
+		};
+		for (int i = 0; i < image_count; ++i) {
+			view_info.image = images[i];
+			assert(vkCreateImageView(device, &view_info, 0, &image_views[i]) == VK_SUCCESS);
+		}
 	}
 	LOG("TODO");
 }

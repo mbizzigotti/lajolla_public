@@ -43,7 +43,7 @@ struct GPUDevice {
 	VkQueue            graphics_queue{ 0 };
 	VkQueue            present_queue{ 0 };
 	VkSwapchainKHR     swap_chain{ 0 };
-	VkFormat           format{ VK_FORMAT_UNDEFINED };
+	VkFormat           swap_format{ VK_FORMAT_UNDEFINED };
 	VkExtent2D         image_extent{ 0 };
 	VkCommandPool      command_pool{ 0 };
 	VkCommandBuffer    command_buffer{ 0 };
