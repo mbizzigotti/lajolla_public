@@ -102,6 +102,9 @@ GPUDevice::GPUDevice()
 
 GPUDevice::~GPUDevice()
 {
+	if (pipeline) vkDestroyPipeline(device, pipeline, 0);
+	if (pipeline_layout) vkDestroyPipelineLayout(device, pipeline_layout, 0);
+	if (descriptor_set_layout) vkDestroyDescriptorSetLayout(device, descriptor_set_layout, 0);
 	if (storage_view) vkDestroyImageView(device, storage_view, 0);
 	if (storage_image) vkDestroyImage(device, storage_image, 0);
 	if (storage_memory) vkFreeMemory(device, storage_memory, 0);
@@ -342,6 +345,18 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 		siv.subresourceRange.baseArrayLayer = 0; siv. subresourceRange.layerCount = 1;
 		vkCreateImageView(device, &siv, nullptr, &storage_view);
 	}
+	LOG("Creating Layouts...");
+	{
+		// Descriptor set: acceleration structure and storage image
+		VkDescriptorSetLayoutBinding asBinding{}; asBinding.binding = 0; asBinding.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR; asBinding.descriptorCount = 1; asBinding.stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+		VkDescriptorSetLayoutBinding imgBinding{}; imgBinding.binding = 1; imgBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; imgBinding.descriptorCount = 1; imgBinding.stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+		std::vector<VkDescriptorSetLayoutBinding> bindings = { asBinding, imgBinding };
+		VkDescriptorSetLayoutCreateInfo dsl{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO }; dsl.bindingCount = (uint32_t)bindings.size(); dsl.pBindings = bindings.data();
+		assert(vkCreateDescriptorSetLayout(device, &dsl, 0, &descriptor_set_layout) == VK_SUCCESS);
+
+		VkPipelineLayoutCreateInfo plci{ VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO }; plci.setLayoutCount = 1; plci.pSetLayouts = &descriptor_set_layout;
+		assert(vkCreatePipelineLayout(device, &plci, 0, &pipeline_layout) == VK_SUCCESS);
+	}
 
 	VkShaderModule shader_rgen{ 0 };
 	VkShaderModule shader_miss{ 0 };
@@ -355,7 +370,65 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 	}
 	LOG("Creating Ray Tracing Pipeline...");
 	{
+		VkPipelineShaderStageCreateInfo stages[] {
+			{
+				.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+				.stage = VK_SHADER_STAGE_RAYGEN_BIT_KHR,
+				.module = shader_rgen,
+				.pName = "main",
+			},
+			{
+				.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+				.stage = VK_SHADER_STAGE_MISS_BIT_KHR,
+				.module = shader_miss,
+				.pName = "main",
+			},
+			{
+				.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+				.stage = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR,
+				.module = shader_chit,
+				.pName = "main",
+			},
+		};
 
+		// Shader groups: raygen(0), miss(1), hitgroup(2)
+		VkRayTracingShaderGroupCreateInfoKHR groups[] {
+			{
+				.sType              = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR,
+				.type               = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR,
+				.generalShader      = 0,
+				.closestHitShader   = VK_SHADER_UNUSED_KHR,
+				.anyHitShader       = VK_SHADER_UNUSED_KHR,
+				.intersectionShader = VK_SHADER_UNUSED_KHR,
+			},
+			{
+				.sType              = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR,
+				.type               = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR,
+				.generalShader      = 1,
+				.closestHitShader   = VK_SHADER_UNUSED_KHR,
+				.anyHitShader       = VK_SHADER_UNUSED_KHR,
+				.intersectionShader = VK_SHADER_UNUSED_KHR,
+			},
+			{
+				.sType              = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR,
+				.type               = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR,
+				.generalShader      = VK_SHADER_UNUSED_KHR,
+				.closestHitShader   = 2,
+				.anyHitShader       = VK_SHADER_UNUSED_KHR,
+				.intersectionShader = VK_SHADER_UNUSED_KHR,
+			},
+		};
+
+		VkRayTracingPipelineCreateInfoKHR pipeline_info {
+			.sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR,
+			.stageCount = (uint32_t)std::size(stages),
+			.pStages = stages,
+			.groupCount = (uint32_t)std::size(groups),
+			.pGroups = groups,
+			.maxPipelineRayRecursionDepth = 1,
+			.layout = pipeline_layout,
+		};
+		assert(vkCreateRayTracingPipelinesKHR(device, 0, 0, 1, &pipeline_info, nullptr, &pipeline) == VK_SUCCESS);
 	}
 
 	vkDestroyShaderModule(device, shader_rgen, 0);
