@@ -5,6 +5,8 @@
 #endif
 #define LOG(...) printf(__VA_ARGS__), putchar('\n')
 #define ERROR(...) LOG(__VA_ARGS__), exit(1)
+#define LOAD_VULKAN_FUNCTION(NAME) \
+	assert(NAME = (PFN_##NAME)vkGetDeviceProcAddr(device, #NAME));
 
 struct QueueFamilyIndices {
 	std::optional<uint32_t> graphicsFamily;
@@ -65,6 +67,7 @@ GPUDevice::GPUDevice()
 
 GPUDevice::~GPUDevice()
 {
+	if (swap_chain) vkDestroySwapchainKHR(device, swap_chain, 0);
 	if (device) vkDestroyDevice(device, 0);
 	if (surface) vkDestroySurfaceKHR(instance, surface, 0);
 	if (instance) vkDestroyInstance(instance, 0);
@@ -72,6 +75,8 @@ GPUDevice::~GPUDevice()
 
 void GPUDevice::attach(RGFW_window* window, Scene* scene)
 {
+	QueueFamilyIndices indices;
+
 	LOG("Creating Window Surface...");
 	{
 		assert(RGFW_window_createSurface_Vulkan(window, instance, &surface) == VK_SUCCESS);
@@ -84,7 +89,6 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 		std::vector<VkPhysicalDevice> devices(device_count);
 		assert(vkEnumeratePhysicalDevices(instance, &device_count, devices.data()) == VK_SUCCESS);
 
-		QueueFamilyIndices indices;
 		for (auto dev : devices) {
 			indices = findQueueFamilies(dev, surface);
 			if (!indices.isComplete()) continue;
@@ -112,8 +116,9 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 		if (physical_device == VK_NULL_HANDLE) {
 			ERROR("No physical device with ray tracing support found.");
 		}
-	
-		LOG("Creating Logical Device...");
+	}
+	LOG("Creating Logical Device...");
+	{
 
 		VkPhysicalDeviceFeatures2                        device_features                 { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
 		VkPhysicalDeviceBufferDeviceAddressFeatures      device_address_features         { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES };
@@ -172,7 +177,58 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 
 		vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphics_queue);
 		vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &present_queue);
+	}
+	LOG("Loading Ray Tracing API Functions...");
+	{
+		// Load ray tracing function pointers
+		LOAD_VULKAN_FUNCTION(vkGetBufferDeviceAddressKHR);
+		LOAD_VULKAN_FUNCTION(vkCreateAccelerationStructureKHR);
+		LOAD_VULKAN_FUNCTION(vkDestroyAccelerationStructureKHR);
+		LOAD_VULKAN_FUNCTION(vkGetAccelerationStructureDeviceAddressKHR);
+		LOAD_VULKAN_FUNCTION(vkCmdBuildAccelerationStructuresKHR);
+		LOAD_VULKAN_FUNCTION(vkBuildAccelerationStructuresKHR);
+		LOAD_VULKAN_FUNCTION(vkCreateRayTracingPipelinesKHR);
+		LOAD_VULKAN_FUNCTION(vkCmdTraceRaysKHR);
+		LOAD_VULKAN_FUNCTION(vkGetRayTracingShaderGroupHandlesKHR);
+	}
+	LOG("Creating Swap Chain...");
+	{
+		VkSurfaceCapabilitiesKHR capabilities = {};
+		vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &capabilities);
+		uint32_t format_count = 0;
+		vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &format_count, nullptr);
+		assert(format_count > 0);
+		std::vector<VkSurfaceFormatKHR> formats(format_count);
+		vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &format_count, formats.data());
+		VkSurfaceFormatKHR surfaceFormat = formats[0];
 
+		VkExtent2D extent = { (uint32_t)scene->camera.width, (uint32_t)scene->camera.height };
+		uint32_t imageCount = capabilities.minImageCount + 1;
+		if (capabilities.maxImageCount > 0 && imageCount > capabilities.maxImageCount)
+			imageCount = capabilities.maxImageCount;
+
+		uint32_t families[] = { indices.graphicsFamily.value(), indices.presentFamily.value() };
+		VkSwapchainCreateInfoKHR swap_chain_info {
+			.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+			.surface = surface,
+			.minImageCount = imageCount,
+			.imageFormat = surfaceFormat.format,
+			.imageColorSpace = surfaceFormat.colorSpace,
+			.imageExtent = extent,
+			.imageArrayLayers = 1,
+			.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+			.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
+			.preTransform = capabilities.currentTransform,
+			.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+			.presentMode = VK_PRESENT_MODE_FIFO_KHR,
+			.clipped = VK_TRUE,
+		};
+		if (indices.graphicsFamily.value() != indices.presentFamily.value()) {
+			swap_chain_info.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+			swap_chain_info.queueFamilyIndexCount = 2;
+			swap_chain_info.pQueueFamilyIndices = families;
+		}
+		assert(vkCreateSwapchainKHR(device, &swap_chain_info, nullptr, &swap_chain) == VK_SUCCESS);
 	}
 	LOG("TODO");
 }
