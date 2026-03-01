@@ -102,6 +102,12 @@ GPUDevice::GPUDevice()
 
 GPUDevice::~GPUDevice()
 {
+	if (device) vkDeviceWaitIdle(device);
+	instance_buffer.Destroy(device);
+	vertex_buffer.Destroy(device);
+	index_buffer.Destroy(device);
+	tas.Destroy(*this);
+	bas.Destroy(*this);
 	if (pipeline) vkDestroyPipeline(device, pipeline, 0);
 	if (pipeline_layout) vkDestroyPipelineLayout(device, pipeline_layout, 0);
 	if (descriptor_set_layout) vkDestroyDescriptorSetLayout(device, descriptor_set_layout, 0);
@@ -226,7 +232,6 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 	}
 	LOG("Loading Ray Tracing API Functions...");
 	{
-		// Load ray tracing function pointers
 		LOAD_VULKAN_FUNCTION(vkGetBufferDeviceAddressKHR);
 		LOAD_VULKAN_FUNCTION(vkCreateAccelerationStructureKHR);
 		LOAD_VULKAN_FUNCTION(vkDestroyAccelerationStructureKHR);
@@ -236,6 +241,7 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 		LOAD_VULKAN_FUNCTION(vkCreateRayTracingPipelinesKHR);
 		LOAD_VULKAN_FUNCTION(vkCmdTraceRaysKHR);
 		LOAD_VULKAN_FUNCTION(vkGetRayTracingShaderGroupHandlesKHR);
+		LOAD_VULKAN_FUNCTION(vkGetAccelerationStructureBuildSizesKHR);
 	}
 	LOG("Creating Swap Chain...");
 	{
@@ -435,10 +441,197 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 	vkDestroyShaderModule(device, shader_miss, 0);
 	vkDestroyShaderModule(device, shader_chit, 0);
 
-	LOG("TODO");
+	LOG("Creating Acceleration Structures...");
+	{
+		// Helper to create buffer + memory
+		auto createBuffer = [&](VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags props, VkBuffer& buf, VkDeviceMemory& mem) {
+			VkBufferCreateInfo bi{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+			bi.size = size; bi.usage = usage; bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+			vkCreateBuffer(device, &bi, nullptr, &buf);
+			VkMemoryRequirements mr; vkGetBufferMemoryRequirements(device, buf, &mr);
+			VkMemoryAllocateInfo ai{ VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO }; ai.allocationSize = mr.size;
+			VkMemoryAllocateFlagsInfo af{ .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO, .flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT };
+			if (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) ai.pNext = &af;
+			ai.memoryTypeIndex = find_memory_type(physical_device, mr.memoryTypeBits, props);
+			vkAllocateMemory(device, &ai, nullptr, &mem);
+			vkBindBufferMemory(device, buf, mem, 0);
+		};
+
+		// Create vertex and index buffers for a single triangle
+		struct Vertex { float x, y, z; };
+		Vertex verts[3] = { {-0.5f,-0.5f,2.0f}, {0.5f,-0.5f,2.0f}, {0.0f,0.5f,2.0f} };
+		uint32_t inds[3] = { 0,1,2 };
+
+		createBuffer(sizeof(verts), VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertex_buffer.buffer, vertex_buffer.memory);
+		createBuffer(sizeof(inds), VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, index_buffer.buffer, index_buffer.memory);
+
+		// staging buffers to upload data
+		VkBuffer vStaging; VkDeviceMemory vStagingMem; createBuffer(sizeof(verts), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, vStaging, vStagingMem);
+		VkBuffer iStaging; VkDeviceMemory iStagingMem; createBuffer(sizeof(inds), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, iStaging, iStagingMem);
+		void* p; vkMapMemory(device, vStagingMem, 0, sizeof(verts), 0, &p); memcpy(p, verts, sizeof(verts)); vkUnmapMemory(device, vStagingMem);
+		vkMapMemory(device, iStagingMem, 0, sizeof(inds), 0, &p); memcpy(p, inds, sizeof(inds)); vkUnmapMemory(device, iStagingMem);
+
+		// copy staging -> device buffers
+		VkCommandBufferAllocateInfo cba{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO }; cba.commandPool = command_pool; cba.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; cba.commandBufferCount = 1;
+		VkCommandBuffer copyCmd; vkAllocateCommandBuffers(device, &cba, &copyCmd);
+		VkCommandBufferBeginInfo binfo{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO }; binfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+		vkBeginCommandBuffer(copyCmd, &binfo);
+		VkBufferCopy copyRegion{ 0,0,sizeof(verts) }; vkCmdCopyBuffer(copyCmd, vStaging, vertex_buffer, 1, &copyRegion);
+		VkBufferCopy copyRegion2{ 0,0,sizeof(inds) }; vkCmdCopyBuffer(copyCmd, iStaging, index_buffer, 1, &copyRegion2);
+		vkEndCommandBuffer(copyCmd);
+		VkSubmitInfo si{ VK_STRUCTURE_TYPE_SUBMIT_INFO }; si.commandBufferCount = 1; si.pCommandBuffers = &copyCmd;
+		vkQueueSubmit(graphics_queue, 1, &si, VK_NULL_HANDLE);
+		vkQueueWaitIdle(graphics_queue);
+		vkFreeCommandBuffers(device, command_pool, 1, &copyCmd);
+
+		vkDestroyBuffer(device, vStaging, 0);
+		vkFreeMemory(device, vStagingMem, 0);
+		vkDestroyBuffer(device, iStaging, 0);
+		vkFreeMemory(device, iStagingMem, 0);
+
+		// Get device addresses
+		VkBufferDeviceAddressInfo bufAddrInfo{ VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO }; bufAddrInfo.buffer = vertex_buffer;
+		VkDeviceAddress vertexAddr = vkGetBufferDeviceAddress(device, &bufAddrInfo);
+		bufAddrInfo.buffer = index_buffer; VkDeviceAddress indexAddr = vkGetBufferDeviceAddress(device, &bufAddrInfo);
+
+		// Build BLAS (triangle)
+		VkAccelerationStructureGeometryTrianglesDataKHR triangles{ VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR };
+		triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+		triangles.vertexData.deviceAddress = vertexAddr;
+		triangles.vertexStride = sizeof(Vertex);
+		triangles.maxVertex = 3;
+		triangles.indexType = VK_INDEX_TYPE_UINT32;
+		triangles.indexData.deviceAddress = indexAddr;
+
+		VkAccelerationStructureGeometryKHR geom{ VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR };
+		geom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+		geom.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+		geom.geometry.triangles = triangles;
+
+		VkAccelerationStructureBuildRangeInfoKHR rangeInfo{}; rangeInfo.primitiveCount = 1;
+		const VkAccelerationStructureBuildRangeInfoKHR* pRange = &rangeInfo;
+
+		VkAccelerationStructureBuildGeometryInfoKHR buildInfo{ VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR };
+		buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+		buildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+		buildInfo.geometryCount = 1;
+		buildInfo.pGeometries = &geom;
+
+		uint32_t maxPrimitiveCounts[1] = { 1 };
+		VkAccelerationStructureBuildSizesInfoKHR sizeInfo{ VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR };
+		vkGetAccelerationStructureBuildSizesKHR(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &buildInfo, maxPrimitiveCounts, &sizeInfo);
+
+		// Create BLAS buffer
+		createBuffer(sizeInfo.accelerationStructureSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, bas.buffer.buffer, bas.buffer.memory);
+		VkAccelerationStructureCreateInfoKHR asCreate{ VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR };
+		asCreate.buffer = bas.buffer.buffer; asCreate.size = sizeInfo.accelerationStructureSize; asCreate.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+		vkCreateAccelerationStructureKHR(device, &asCreate, nullptr, &bas.handle);
+
+		// scratch buffer
+		VkBuffer scratch; VkDeviceMemory scratchMem; createBuffer(sizeInfo.buildScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, scratch, scratchMem);
+		VkBufferDeviceAddressInfo saddr{ VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO }; saddr.buffer = scratch; VkDeviceAddress scratchAddr = vkGetBufferDeviceAddress(device, &saddr);
+
+		// Build BLAS command
+		VkCommandBufferAllocateInfo ab{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO }; ab.commandPool = command_pool; ab.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; ab.commandBufferCount = 1;
+		VkCommandBuffer buildCmd; vkAllocateCommandBuffers(device, &ab, &buildCmd);
+		vkBeginCommandBuffer(buildCmd, &binfo);
+		buildInfo.dstAccelerationStructure = bas.handle;
+		buildInfo.scratchData.deviceAddress = scratchAddr;
+		vkCmdBuildAccelerationStructuresKHR(buildCmd, 1, &buildInfo, &pRange);
+		vkEndCommandBuffer(buildCmd);
+		si.commandBufferCount = 1; si.pCommandBuffers = &buildCmd;
+		vkQueueSubmit(graphics_queue, 1, &si, VK_NULL_HANDLE);
+		vkQueueWaitIdle(graphics_queue);
+		vkFreeCommandBuffers(device, command_pool, 1, &buildCmd);
+
+		vkDestroyBuffer(device, scratch, 0);
+		vkFreeMemory(device, scratchMem, 0);
+
+		// Get BLAS device address
+		VkAccelerationStructureDeviceAddressInfoKHR addrInfo{ VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR };
+		addrInfo.accelerationStructure = bas.handle;
+		bas.address = vkGetAccelerationStructureDeviceAddressKHR(device, &addrInfo);
+
+		// Create TLAS (one instance referencing BLAS)
+		VkAccelerationStructureInstanceKHR asInstance{};
+		asInstance.transform = { { {1,0,0,0}, {0,1,0,0}, {0,0,1,0} } };
+		asInstance.instanceCustomIndex = 0;
+		asInstance.mask = 0xFF;
+		asInstance.instanceShaderBindingTableRecordOffset = 0;
+		asInstance.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+		// set accelerationStructureReference
+		uint64_t blasRef = bas.address;
+		memcpy(&asInstance.accelerationStructureReference, &blasRef, sizeof(blasRef));
+
+		// create instance buffer
+		createBuffer(sizeof(asInstance), VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, instance_buffer.buffer, instance_buffer.memory);
+		VkBuffer instStaging; VkDeviceMemory instStagingMem; createBuffer(sizeof(asInstance), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, instStaging, instStagingMem);
+		vkMapMemory(device, instStagingMem, 0, sizeof(asInstance), 0, &p); memcpy(p, &asInstance, sizeof(asInstance)); vkUnmapMemory(device, instStagingMem);
+		// copy
+		vkAllocateCommandBuffers(device, &cba, &copyCmd);
+		vkBeginCommandBuffer(copyCmd, &binfo);
+		VkBufferCopy creg{ 0,0,sizeof(asInstance) }; vkCmdCopyBuffer(copyCmd, instStaging, instance_buffer, 1, &creg);
+		vkEndCommandBuffer(copyCmd);
+		si.pCommandBuffers = &copyCmd; vkQueueSubmit(graphics_queue, 1, &si, VK_NULL_HANDLE); vkQueueWaitIdle(graphics_queue); vkFreeCommandBuffers(device, command_pool, 1, &copyCmd);
+
+		vkDestroyBuffer(device, instStaging, 0);
+		vkFreeMemory(device, instStagingMem, 0);
+
+		// Build TLAS
+		VkAccelerationStructureGeometryInstancesDataKHR instancesData{ VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR };
+		VkBufferDeviceAddressInfo instAddrInfo{ VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO }; instAddrInfo.buffer = instance_buffer; instancesData.data.deviceAddress = vkGetBufferDeviceAddress(device, &instAddrInfo);
+		VkAccelerationStructureGeometryKHR iGeom{ VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR };
+		iGeom.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR; iGeom.geometry.instances = instancesData;
+
+		VkAccelerationStructureBuildGeometryInfoKHR tBuildInfo{ VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR };
+		tBuildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR; tBuildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+		tBuildInfo.geometryCount = 1; tBuildInfo.pGeometries = &iGeom;
+		uint32_t maxPrimCountsTLAS[1] = { 1 };
+		VkAccelerationStructureBuildSizesInfoKHR tSizes{ VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR };
+		vkGetAccelerationStructureBuildSizesKHR(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &tBuildInfo, maxPrimCountsTLAS, &tSizes);
+
+		createBuffer(tSizes.accelerationStructureSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, tas.buffer.buffer, tas.buffer.memory);
+		VkAccelerationStructureCreateInfoKHR tcreate{ VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR }; tcreate.buffer = tas.buffer.buffer; tcreate.size = tSizes.accelerationStructureSize; tcreate.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+		vkCreateAccelerationStructureKHR(device, &tcreate, nullptr, &tas.handle);
+
+		// scratch for TLAS
+		VkBuffer tscratch; VkDeviceMemory tscratchMem; createBuffer(tSizes.buildScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, tscratch, tscratchMem);
+		saddr.buffer = tscratch; scratchAddr = vkGetBufferDeviceAddress(device, &saddr);
+
+		// build TLAS command
+		assert(vkAllocateCommandBuffers(device, &ab, &buildCmd) == VK_SUCCESS);
+		assert(vkBeginCommandBuffer(buildCmd, &binfo) == VK_SUCCESS);
+		tBuildInfo.dstAccelerationStructure = tas.handle;
+		tBuildInfo.scratchData.deviceAddress = scratchAddr;
+		vkCmdBuildAccelerationStructuresKHR(buildCmd, 1, &tBuildInfo, &pRange);
+		assert(vkEndCommandBuffer(buildCmd) == VK_SUCCESS);
+		si.pCommandBuffers = &buildCmd;
+		assert(vkQueueSubmit(graphics_queue, 1, &si, VK_NULL_HANDLE) == VK_SUCCESS);
+		assert(vkQueueWaitIdle(graphics_queue) == VK_SUCCESS);
+		vkFreeCommandBuffers(device, command_pool, 1, &buildCmd);
+
+		vkDestroyBuffer(device, tscratch, 0);
+		vkFreeMemory(device, tscratchMem, 0);
+	}
 }
 
 void GPUDevice::render(RGFW_window* window)
 {
-	LOG("TODO");
+	return;
+	while (!RGFW_window_shouldClose(window))
+	{
+		RGFW_pollEvents();
+	}
+}
+
+void VulkanAccelerationStructure::Destroy(struct GPUDevice& gpu)
+{
+	if (handle) gpu.vkDestroyAccelerationStructureKHR(gpu.device, handle, 0);
+	buffer.Destroy(gpu.device);
+}
+
+void VulkanBuffer::Destroy(VkDevice device)
+{
+	if (buffer) vkDestroyBuffer(device, buffer, 0);
+	if (memory) vkFreeMemory(device, memory, 0);
 }
