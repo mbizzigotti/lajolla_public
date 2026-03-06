@@ -11,7 +11,7 @@ import random;
 [[vk::binding(1)]] RWTexture2D<float4> image;
 [[vk::binding(2)]] ConstantBuffer<Camera> camera;
 [[vk::binding(3)]] StructuredBuffer<Lambertian> material_buffer;
-// [vk::binding(4)]] StructuredBuffer<Instance> instance_buffer;
+[[vk::binding(4)]] StructuredBuffer<Shape> shape_buffer;
 
 // ------------------------------------------------------------
 // Payload & Attributes
@@ -87,12 +87,12 @@ void chit(inout Payload payload, in HitAttributes attr)
     );
 	
     // Simple barycentric color
-    payload.color = bary;
+    payload.radiance = bary;
     payload.hit   = 1;
 #else
     uint instance_id = InstanceID();
-    //Instance instance = instance_buffer[instance_id];
-    float3 reflectance = material_buffer[instance_id].reflectance;
+    Shape shape = shape_buffer[instance_id];
+    float3 reflectance = material_buffer[shape.material_id].reflectance;
     payload.radiance = reflectance;
 #endif
 }

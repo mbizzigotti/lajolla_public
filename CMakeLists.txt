@@ -10,7 +10,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(CMAKE_BUILD_TYPE RelWithDebInfo)
 
 if(MSVC)
-  add_compile_options(/Wall)
+ # add_compile_options(/Wall)
 else()
   add_compile_options(-Wall)
 endif()
@@ -26,7 +26,7 @@ set(SHADER_OUTPUT ${CMAKE_BINARY_DIR}/basic.spv)
 add_custom_command(
     OUTPUT ${SHADER_OUTPUT}
     COMMAND ${SLANGC_EXECUTABLE} ${SHADER_SOURCE} -target spirv -profile sm_6_6 -emit-spirv-directly -fvk-use-entrypoint-name -o ${SHADER_OUTPUT}
-    DEPENDS ${SHADER_SOURCE} ${SHADER_SOURCE_DIR}/camera.slang ${SHADER_SOURCE_DIR}/data_structures.slang
+    DEPENDS ${SHADER_SOURCE} ${SHADER_SOURCE_DIR}/camera.slang ${SHADER_SOURCE_DIR}/shared.slang
     COMMENT "Shader: ${SHADER_SOURCE} -> ${SHADER_OUTPUT}"
 )
 
@@ -121,7 +121,7 @@ set(SRCS src/3rdparty/miniz.h
          src/volume.cpp)
 
 add_library(lajolla_lib STATIC ${SRCS})
-add_library(RGFW SHARED "src/RGFW.c")
+add_library(RGFW SHARED "src/RGFW.cpp")
 if(APPLE)
     target_link_libraries(RGFW PRIVATE "$<LINK_LIBRARY:FRAMEWORK,Cocoa>")
     target_link_libraries(RGFW PRIVATE "$<LINK_LIBRARY:FRAMEWORK,IOKit>")

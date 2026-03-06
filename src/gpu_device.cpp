@@ -1,4 +1,8 @@
 ﻿#include "gpu_device.h"
+#define IMGUI_DEFINE_MATH_OPERATORS
+#define RGFW_IMGUI_IMPLEMENTATION
+#include "3rdparty/imgui_impl_rgfw.h"
+#include "3rdparty/imgui_impl_vulkan.h"
 #include "shaders/shared.slang"
 #include <fstream>
 
@@ -64,7 +68,7 @@ VkDeviceAddress get_buffer_device_address(VkDevice device, VkBuffer buffer) {
 	return vkGetBufferDeviceAddress(device, &info);
 }
 
-void GPUDevice::add_shape(const Shape &shape) {
+void GPUDevice::add_shape(uint32_t index, const Shape &shape) {
 	VulkanTriangleMesh triangle_mesh{};
 
 	const TriangleMesh &mesh = std::get<TriangleMesh>(shape);
@@ -165,7 +169,7 @@ void GPUDevice::add_shape(const Shape &shape) {
 	// Create instance referencing BLAS
 	VkAccelerationStructureInstanceKHR asInstance = {
 		.transform = { { {1,0,0,0}, {0,1,0,0}, {0,0,1,0} } },
-		.instanceCustomIndex = (uint32_t)mesh.material_id,
+		.instanceCustomIndex = index,
 		.mask = 0xFF,
 		.instanceShaderBindingTableRecordOffset = 0,
 		.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR,
@@ -212,6 +216,12 @@ struct material_convert_op {
 	void operator()(const DisneyBSDF& bsdf) { assert(false); }
 
 	VulkanRawBuffer& raw;
+};
+
+struct shape_convert_op {
+	GPU::Shape operator()(const auto& shape) {
+		return { shape.material_id, shape.area_light_id, shape.interior_medium_id, shape.exterior_medium_id };
+	}
 };
 
 GPUDevice::GPUDevice()
@@ -539,6 +549,10 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 				.binding = 3,
 				.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 			},
+			{
+				.binding = 4,
+				.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			},
 		};
 		for (auto& b : bindings) {
 			b.descriptorCount = 1;
@@ -569,7 +583,7 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 
 	LOG("Loading Shaders...");
 	{
-		shader = load_shader_from_file(device, "../basic.spv");
+		shader = load_shader_from_file(device, "basic.spv");
 	}
 	LOG("Creating Ray Tracing Pipeline...");
 	{
@@ -638,8 +652,8 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 
 	LOG("Creating Acceleration Structures...");
 	{
-		for (const Shape& shape: scene->shapes) {
-			add_shape(shape);
+		for (uint32_t i = 0; i < scene->shapes.size(); ++i) {
+			add_shape(i, scene->shapes[i]);
 		}
 
 		// create instance buffer
@@ -752,10 +766,15 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 		memcpy(data, &camera, sizeof(camera));
 		vkUnmapMemory(device, camera_buffer.memory);
 
-		for (int i = 0; i < scene->materials.size(); ++i) {
-			std::visit(material_convert_op{material_buffer}, scene->materials[i]);
+		for (const Material& material : scene->materials) {
+			std::visit(material_convert_op{material_buffer}, material);
 		}
 		material_buffer.Create(*this, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+		
+		for (const Shape& shape : scene->shapes) {
+			shape_buffer.Add(std::visit(shape_convert_op{}, shape));
+		}
+		shape_buffer.Create(*this, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
 	}
 	LOG("Creating Descriptor Set...");
 	{
@@ -765,8 +784,11 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 			{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,              16 },
 			{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,             16 },
 			{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,             16 },
+			{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,     64 },
 		};
-		VkDescriptorPoolCreateInfo dpc{ VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO }; dpc.maxSets = 1; dpc.poolSizeCount = (uint32_t)std::size(pool_sizes); dpc.pPoolSizes = pool_sizes;
+		VkDescriptorPoolCreateInfo dpc{ VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
+		dpc.maxSets = 16;
+		dpc.poolSizeCount = (uint32_t)std::size(pool_sizes); dpc.pPoolSizes = pool_sizes;
 		assert(vkCreateDescriptorPool(device, &dpc, 0, &descriptor_pool) == VK_SUCCESS);
 		VkDescriptorSetAllocateInfo dsa{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO }; dsa.descriptorPool = descriptor_pool; dsa.descriptorSetCount = 1; dsa.pSetLayouts = &descriptor_set_layout;
 		assert(vkAllocateDescriptorSets(device, &dsa, &descriptor_set) == VK_SUCCESS);
@@ -793,6 +815,12 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 			.offset = 0,
 			.range = VK_WHOLE_SIZE,
 		};
+		
+		VkDescriptorBufferInfo shape_buffer_info = {
+			.buffer = shape_buffer.buffer,
+			.offset = 0,
+			.range = VK_WHOLE_SIZE,
+		};
 
 		VkWriteDescriptorSet writes[] = {
 			{
@@ -811,6 +839,10 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 				.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 				.pBufferInfo = &material_buffer_info,
 			},
+			{
+				.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				.pBufferInfo = &shape_buffer_info,
+			},
 		};
 		for (int i = 0; i < std::size(writes); ++i) {
 			writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -820,6 +852,84 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 		}
 		vkUpdateDescriptorSets(device, (uint32_t)std::size(writes), writes, 0, 0);
 	}
+	LOG("Creating Render Pass...");
+	{
+		VkAttachmentDescription attachment = {};
+		attachment.format = swap_format;
+		attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+		attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+		attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+		attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+		attachment.initialLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+		attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+		VkAttachmentReference color_attachment = {};
+		color_attachment.attachment = 0;
+		color_attachment.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		VkSubpassDescription subpass = {};
+		subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+		subpass.colorAttachmentCount = 1;
+		subpass.pColorAttachments = &color_attachment;
+		VkSubpassDependency dependency = {};
+		dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+		dependency.dstSubpass = 0;
+		dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		dependency.srcAccessMask = 0;
+		dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		VkRenderPassCreateInfo info = {};
+		info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+		info.attachmentCount = 1;
+		info.pAttachments = &attachment;
+		info.subpassCount = 1;
+		info.pSubpasses = &subpass;
+		info.dependencyCount = 1;
+		info.pDependencies = &dependency;
+		assert(vkCreateRenderPass(device, &info, 0, &render_pass) == VK_SUCCESS);
+	}
+	{
+		VkImageView attachment[1];
+		VkFramebufferCreateInfo info = {};
+		info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+		info.renderPass = render_pass;
+		info.attachmentCount = 1;
+		info.pAttachments = attachment;
+		info.width = image_extent.width;
+		info.height = image_extent.height;
+		info.layers = 1;
+		for (uint32_t i = 0; i < image_count; i++)
+		{
+			attachment[0] = image_views[i];
+			assert(vkCreateFramebuffer(device, &info, 0, &frame_buffers[i]) == VK_SUCCESS);
+		}
+	}
+
+	// Setup Dear ImGui context
+	IMGUI_CHECKVERSION();
+	ImGui::CreateContext();
+	ImGuiIO& io = ImGui::GetIO(); (void)io;
+	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
+	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+
+	// Setup Platform/Renderer backends
+	ImGui_ImplRgfw_InitForVulkan(window, true);
+	ImGui_ImplVulkan_InitInfo init_info = {};
+	init_info.Instance = instance;
+	init_info.PhysicalDevice = physical_device;
+	init_info.Device = device;
+	init_info.QueueFamily = 0;
+	init_info.Queue = graphics_queue;
+	init_info.DescriptorPool = descriptor_pool;
+	init_info.MinImageCount = 2;
+	init_info.ImageCount = image_count;
+	init_info.PipelineInfoMain.RenderPass = render_pass;
+	init_info.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+	init_info.CheckVkResultFn = [](VkResult err) {
+		if (err == VK_SUCCESS) return;
+		fprintf(stderr, "[vulkan] Error: VkResult = %d\n", err);
+		if (err < 0) abort();
+	};
+	ImGui_ImplVulkan_Init(&init_info);
 }
 
 void GPUDevice::render(RGFW_window* window)
@@ -836,6 +946,9 @@ void GPUDevice::render(RGFW_window* window)
 	while (!RGFW_window_shouldClose(window))
 	{
 		RGFW_pollEvents();
+
+		if (RGFW_isKeyPressed(RGFW_r))
+			frame_count = 0;
 
 		uint32_t image_index;
 		vkAcquireNextImageKHR(device, swap_chain, UINT64_MAX, image_available_semaphore, 0, &image_index);
@@ -864,10 +977,27 @@ void GPUDevice::render(RGFW_window* window)
 		VkImageCopy imcopy{}; imcopy.srcOffset = { 0,0,0 }; imcopy.dstOffset = { 0,0,0 }; imcopy.extent = { width, height, 1 }; imcopy.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; imcopy.srcSubresource.layerCount = 1; imcopy.dstSubresource = imcopy.srcSubresource;
 		vkCmdCopyImage(cmd, storage_image, VK_IMAGE_LAYOUT_GENERAL, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imcopy);
 
-		// transition swapchain image to present
-		VkImageMemoryBarrier toPresent = toCopy; toPresent.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; toPresent.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR; toPresent.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; toPresent.dstAccessMask = 0;
-		vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &toPresent);
-
+		ImGui_ImplVulkan_NewFrame();
+		ImGui_ImplRgfw_NewFrame();
+		ImGui::NewFrame();
+		ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
+		ImGui::Begin("Debug", 0, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize);
+		{
+			ImGui::Text("Sample Count: %u", frame_count);
+		}
+		ImGui::End();
+		ImGui::Render();
+		{
+			VkRenderPassBeginInfo info = {
+				.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+				.renderPass = render_pass,
+				.framebuffer = frame_buffers[image_index],
+				.renderArea = {.extent = image_extent},
+			};
+			vkCmdBeginRenderPass(cmd, &info, VK_SUBPASS_CONTENTS_INLINE);
+		}
+		ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
+		vkCmdEndRenderPass(cmd);
 		vkEndCommandBuffer(cmd);
 
 		VkSubmitInfo submit{ VK_STRUCTURE_TYPE_SUBMIT_INFO }; VkSemaphore waitSem[] = { image_available_semaphore }; VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_TRANSFER_BIT };
@@ -902,3 +1032,10 @@ void VulkanBuffer::Destroy(VkDevice device)
 	if (buffer) vkDestroyBuffer(device, buffer, 0);
 	if (memory) vkFreeMemory(device, memory, 0);
 }
+
+#include "3rdparty/imgui.cpp"
+#include "3rdparty/imgui_demo.cpp"
+#include "3rdparty/imgui_draw.cpp"
+#include "3rdparty/imgui_tables.cpp"
+#include "3rdparty/imgui_widgets.cpp"
+#include "3rdparty/imgui_impl_vulkan.cpp"

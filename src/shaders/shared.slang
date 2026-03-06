@@ -33,7 +33,7 @@ struct Camera
     int medium_id; // for participating media rendering in homework 2
 };
 
-struct Instance
+struct Shape
 {
 	int material_id;
 	int area_light_id;

@@ -91,6 +91,7 @@ struct GPUDevice {
 	VulkanBuffer                    instance_buffer{};
 	VulkanBuffer                    camera_buffer{};
 	VulkanRawBuffer                 material_buffer{};
+	VulkanRawBuffer                 shape_buffer{};
 	
 	std::vector<VkAccelerationStructureInstanceKHR>        instances;
 	std::vector<VulkanAccelerationStructure>               bass;
@@ -102,7 +103,8 @@ struct GPUDevice {
 		Matrix4x4f proj_inverse;
 	} uniform_data{};
 
-	VkBuffer ubo{ 0 };
+	VkRenderPass render_pass{ 0 };
+	VkFramebuffer frame_buffers[MAX_SWAP_CHAIN_IMAGES]{ 0 };
 
 	GPUDevice();
 	~GPUDevice();
@@ -110,7 +112,7 @@ struct GPUDevice {
 	void attach(RGFW_window* window, Scene *scene);
 	void render(RGFW_window *window);
 
-	void add_shape(const Shape &shape);
+	void add_shape(uint32_t index, const Shape &shape);
 
 	uint32_t find_memory_type(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
 		VkPhysicalDeviceMemoryProperties memProps;
