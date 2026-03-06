@@ -29,6 +29,22 @@ struct VulkanTriangleMesh {
 	VulkanBuffer index_buffer{ 0 };
 };
 
+struct VulkanRawBuffer {
+	std::vector<uint8_t> data;
+	VulkanBuffer buffer;
+
+	void Create(struct GPUDevice& gpu, VkFlags usage);
+	void Destroy(struct GPUDevice& gpu);
+
+	template <typename T>
+	void Add(const T& t) {
+		uint8_t* bytes = (uint8_t*)(&t);
+		uint32_t size = sizeof(T);
+		for (uint32_t i = 0; i < size; ++i)
+			data.emplace_back(bytes[i]);
+	}
+};
+
 #define MAX_SWAP_CHAIN_IMAGES 4 /* For mobile devices, this would need to be higher.. */
 struct GPUDevice {
 	PFN_vkCreateRayTracingPipelinesKHR              vkCreateRayTracingPipelinesKHR             { nullptr };
@@ -67,19 +83,18 @@ struct GPUDevice {
 	VkDescriptorSetLayout           descriptor_set_layout{ 0 };
 	VkPipelineLayout                pipeline_layout{ 0 };
 	VkPipeline                      pipeline{ 0 };
-	VulkanAccelerationStructure     bas{};
 	VulkanAccelerationStructure     tas{};
 	VulkanBuffer                    sbt_buffer{ 0 };
 	VkStridedDeviceAddressRegionKHR rgen_sbt{};
 	VkStridedDeviceAddressRegionKHR miss_sbt{};
 	VkStridedDeviceAddressRegionKHR chit_sbt{};
-	VulkanBuffer                    instance_buffer{ 0 };
-	VulkanBuffer                    camera_buffer{ 0 };
+	VulkanBuffer                    instance_buffer{};
+	VulkanBuffer                    camera_buffer{};
+	VulkanRawBuffer                 material_buffer{};
 	
+	std::vector<VkAccelerationStructureInstanceKHR>        instances;
+	std::vector<VulkanAccelerationStructure>               bass;
 	std::vector<VulkanTriangleMesh>                        triangle_meshes;
-	std::vector<VkAccelerationStructureGeometryKHR>        geometries;
-	std::vector<VkAccelerationStructureBuildRangeInfoKHR>  build_ranges;
-	std::vector<uint32_t>                                  primitive_counts;
 	
 	struct UniformData
 	{
@@ -95,7 +110,6 @@ struct GPUDevice {
 	void attach(RGFW_window* window, Scene *scene);
 	void render(RGFW_window *window);
 
-private:
 	void add_shape(const Shape &shape);
 
 	uint32_t find_memory_type(uint32_t typeFilter, VkMemoryPropertyFlags properties) {

@@ -1,12 +1,17 @@
-#include "camera.slang"
+import shared;
+import camera;
+import random;
 
 // ------------------------------------------------------------
 // Global Resources
 // ------------------------------------------------------------
 
+[[vk::push_constant]] ConstantBuffer<uint4> frame;
 [[vk::binding(0)]] RaytracingAccelerationStructure scene;
 [[vk::binding(1)]] RWTexture2D<float4> image;
 [[vk::binding(2)]] ConstantBuffer<Camera> camera;
+[[vk::binding(3)]] StructuredBuffer<Lambertian> material_buffer;
+// [vk::binding(4)]] StructuredBuffer<Instance> instance_buffer;
 
 // ------------------------------------------------------------
 // Payload & Attributes
@@ -15,7 +20,7 @@
 struct Payload
 {
     float3 throughput;
-    float3 color;
+    float3 radiance;
     uint   hit;
 };
 
@@ -33,15 +38,28 @@ void rgen()
 {
     uint2 pixel_index = DispatchRaysIndex().xy;
     uint2 dimensions = DispatchRaysDimensions().xy;
-
-    RayDesc ray = camera.sample_primary(float2(pixel_index) / float2(dimensions));
+    pcg32_state rng = init_pcg32(frame.x * (pixel_index.y * dimensions.x + pixel_index.x));
+    RayDesc ray = camera.sample_primary(pixel_index, dimensions, rng);
 
     Payload payload;
     payload.throughput = float3(1.0);
-    payload.color = float3(0.0);
-    // RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH
-    TraceRay(scene, 0, uint.maxValue, 0, 0, 0, ray, payload);
-    image.Store(pixel_index, float4(payload.color, 1));
+    payload.radiance = float3(0.0);
+    {
+		// RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH
+		TraceRay(scene, 0, uint.maxValue, 0, 0, 0, ray, payload);
+    }
+    float4 result = float4(payload.radiance, 1);
+	
+    if (frame.x == 0)
+	{
+		image.Store(pixel_index, result);
+	}
+    else
+    {
+		float u = 1.0f / (float)(frame.x + 1);
+        float4 old = image.Load(pixel_index);
+        image.Store(pixel_index, lerp(old, result, u));
+    }
 }
 
 // ------------------------------------------------------------
@@ -51,26 +69,17 @@ void rgen()
 [shader("miss")]
 void miss(inout Payload payload)
 {
-    payload.color = float3(0.1, 0.1, 0.3); // sky color
+    payload.radiance = float3(0.1, 0.1, 0.3); // sky color
 }
 
 // ------------------------------------------------------------
 // Closest Hit Shader
 // ------------------------------------------------------------
 
-static const float3 colors[] = {
-	float3(1.0, 0.0, 0.0),
-	float3(1.0, 1.0, 0.0),
-	float3(0.0, 1.0, 0.0),
-	float3(0.0, 1.0, 1.0),
-	float3(0.0, 0.0, 1.0),
-	float3(1.0, 1.0, 1.0),
-};
-
 [shader("closesthit")]
 void chit(inout Payload payload, in HitAttributes attr)
 {
-#if 1
+#if 0
     float3 bary = float3(
 		1.0 - attr.barycentrics.x - attr.barycentrics.y,
         attr.barycentrics.x,
@@ -81,6 +90,9 @@ void chit(inout Payload payload, in HitAttributes attr)
     payload.color = bary;
     payload.hit   = 1;
 #else
-	payload.color = colors[InstanceID() % 6];
+    uint instance_id = InstanceID();
+    //Instance instance = instance_buffer[instance_id];
+    float3 reflectance = material_buffer[instance_id].reflectance;
+    payload.radiance = reflectance;
 #endif
 }

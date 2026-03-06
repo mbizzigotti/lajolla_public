@@ -1,6 +1,5 @@
-#define PI 3.141592653589793238462643383279502884197169
-
-#include "data_structures.inl"
+import shared;
+import random;
 
 extension Filter
 {
@@ -23,8 +22,8 @@ extension Filter
         case FilterType.Gaussian:
         {
             float r = value * sqrt(-2 * log(max(rnd_param[0], 1e-8)));
-            return { r * cos(2 * PI * rnd_param[1]),
-                     r * sin(2 * PI * rnd_param[1]) };
+            return { r * cos(2 * float.getPi() * rnd_param[1]),
+                     r * sin(2 * float.getPi() * rnd_param[1]) };
         }
 		}
 	}
@@ -42,22 +41,19 @@ float3 xform_vector(float4x4 xform, float3 vec) {
 
 extension Camera
 {
-    RayDesc sample_primary(float2 screen_pos)
+    RayDesc sample_primary(uint2 pixel_pos, uint2 dim, inout pcg32_state rng)
 	{
-        // screen_pos' domain is [0, 1]^2
-        float2 pixel_pos = { screen_pos.x * width, screen_pos.y * height };
-
         // Importance sample from the pixel filter (see filter.h for more explanation).
         // We first extract the subpixel offset.
-        float dx = pixel_pos.x - floor(pixel_pos.x);
-        float dy = pixel_pos.y - floor(pixel_pos.y);
+        float dx = rng.next_float();
+        float dy = rng.next_float();
         // dx/dy are uniform variables in [0, 1],
         // so let's remap them using importance sampling.
-        float2 offset = filter.sample(float2(dx, dy));
+        float2 offset = 0.5 * filter.sample(float2(dx, dy));
         // Filters are placed at pixel centers.
         float2 remapped_pos = {
-            (floor(pixel_pos.x) + 0.5 + offset.x) / width,
-            (floor(pixel_pos.y) + 0.5 + offset.y) / height
+            (float(pixel_pos.x) + 0.5 + offset.x) / float(dim.x),
+            (float(pixel_pos.y) + 0.5 + offset.y) / float(dim.y)
 		};
 
         float3 pt = xform_point(sample_to_cam,

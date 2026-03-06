@@ -19,13 +19,14 @@ find_package(Embree REQUIRED)
 find_package(Vulkan REQUIRED)
 find_program(SLANGC_EXECUTABLE slangc REQUIRED)
 
-set(SHADER_SOURCE ${CMAKE_SOURCE_DIR}/src/shaders/basic.slang)
+set(SHADER_SOURCE_DIR ${CMAKE_SOURCE_DIR}/src/shaders)
+set(SHADER_SOURCE ${SHADER_SOURCE_DIR}/basic.slang)
 set(SHADER_OUTPUT ${CMAKE_BINARY_DIR}/basic.spv)
 
 add_custom_command(
     OUTPUT ${SHADER_OUTPUT}
     COMMAND ${SLANGC_EXECUTABLE} ${SHADER_SOURCE} -target spirv -profile sm_6_6 -emit-spirv-directly -fvk-use-entrypoint-name -o ${SHADER_OUTPUT}
-    DEPENDS ${SHADER_SOURCE} ${CMAKE_SOURCE_DIR}/src/shaders/camera.slang
+    DEPENDS ${SHADER_SOURCE} ${SHADER_SOURCE_DIR}/camera.slang ${SHADER_SOURCE_DIR}/data_structures.slang
     COMMENT "Shader: ${SHADER_SOURCE} -> ${SHADER_OUTPUT}"
 )
 
