@@ -39,7 +39,8 @@ void rgen()
     Payload payload;
     payload.throughput = float3(1.0);
     payload.color = float3(0.0);
-    TraceRay(scene, 0, 0xff, 0, 0, 0, ray, payload);
+    // RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH
+    TraceRay(scene, 0, uint.maxValue, 0, 0, 0, ray, payload);
     image.Store(pixel_index, float4(payload.color, 1));
 }
 
@@ -57,16 +58,29 @@ void miss(inout Payload payload)
 // Closest Hit Shader
 // ------------------------------------------------------------
 
+static const float3 colors[] = {
+	float3(1.0, 0.0, 0.0),
+	float3(1.0, 1.0, 0.0),
+	float3(0.0, 1.0, 0.0),
+	float3(0.0, 1.0, 1.0),
+	float3(0.0, 0.0, 1.0),
+	float3(1.0, 1.0, 1.0),
+};
+
 [shader("closesthit")]
 void chit(inout Payload payload, in HitAttributes attr)
 {
+#if 1
     float3 bary = float3(
-        1.0 - attr.barycentrics.x - attr.barycentrics.y,
+		1.0 - attr.barycentrics.x - attr.barycentrics.y,
         attr.barycentrics.x,
         attr.barycentrics.y
     );
-
+	
     // Simple barycentric color
     payload.color = bary;
     payload.hit   = 1;
+#else
+	payload.color = colors[InstanceID() % 6];
+#endif
 }

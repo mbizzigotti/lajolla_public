@@ -12,9 +12,6 @@ Spectrum path_tracing(const Scene &scene,
                        (y + next_pcg32_real<Real>(rng)) / h);
     Ray ray = sample_primary(scene.camera, screen_pos);
 
-	if (x == 100 && y == 100)
-		printf("Direction = %.4f %.4f %.4f\n", ray.dir.x, ray.dir.y, ray.dir.z);
-
     RayDifferential ray_diff = init_ray_differential(w, h);
 
     std::optional<PathVertex> vertex_ = intersect(scene, ray, ray_diff);

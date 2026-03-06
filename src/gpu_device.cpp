@@ -581,7 +581,7 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 		// Create TLAS (one instance referencing BLAS)
 		VkAccelerationStructureInstanceKHR asInstance{};
 		asInstance.transform = { { {1,0,0,0}, {0,1,0,0}, {0,0,1,0} } };
-		asInstance.instanceCustomIndex = 0;
+		asInstance.instanceCustomIndex = 4;
 		asInstance.mask = 0xFF;
 		asInstance.instanceShaderBindingTableRecordOffset = 0;
 		asInstance.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;

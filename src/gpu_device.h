@@ -5,14 +5,6 @@
 #define NOMINMAX
 #include "3rdparty/RGFW.h"
 
-enum {
-	SHADER_RAYGEN,
-	SHADER_MISS,
-	SHADER_HIT,
-	SHADER_CALLABLE,
-	SHADER_COUNT,
-};
-
 struct VulkanBuffer {
 	VkBuffer       buffer{ 0 };
 	VkDeviceMemory memory{ 0 };
@@ -86,7 +78,7 @@ struct GPUDevice {
 	
 	std::vector<VulkanTriangleMesh>                        triangle_meshes;
 	std::vector<VkAccelerationStructureGeometryKHR>        geometries;
-	std::vector< VkAccelerationStructureBuildRangeInfoKHR> build_ranges;
+	std::vector<VkAccelerationStructureBuildRangeInfoKHR>  build_ranges;
 	std::vector<uint32_t>                                  primitive_counts;
 	
 	struct UniformData
