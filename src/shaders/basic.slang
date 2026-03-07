@@ -24,10 +24,17 @@ import random;
 struct Payload
 {
     pcg32_state rng;
+    float3 dir;
     float3 throughput;
     float3 radiance;
-    float3 dir;
-    uint   hit;
+    float3 origin;
+    int depth;
+    bool done;
+};
+
+struct ShadowPayload
+{
+    bool hit;
 };
 
 struct HitAttributes
@@ -44,16 +51,27 @@ void rgen()
 {
     uint2 pixel_index = DispatchRaysIndex().xy;
     uint2 dimensions = DispatchRaysDimensions().xy;
-    pcg32_state rng = init_pcg32(frame.x * (pixel_index.y * dimensions.x + pixel_index.x));
+    pcg32_state rng = init_pcg32(frame.x * dimensions.x * dimensions.y + (pixel_index.y * dimensions.x + pixel_index.x));
     RayDesc ray = camera.sample_primary(pixel_index, dimensions, rng);
 
     Payload payload;
     payload.rng = rng;
     payload.throughput = float3(1.0);
     payload.radiance = float3(0.0);
+    payload.origin = ray.Origin;
+    payload.dir = float3(0.0);
+    payload.depth = 0;
+    payload.done = false;
+	do
     {
-		TraceRay(scene, 0, uint.maxValue, 0, 0, 0, ray, payload);
+        TraceRay(scene, 0, uint.maxValue, 0, 0, 0, ray, payload);
+        ray.Origin = payload.origin;
+        ray.Direction = payload.dir;
+        ray.TMin = 0.0001;
+        ray.TMax = 1e9;
+        payload.depth += 1;
     }
+	while (!payload.done && payload.depth < 5);
     float4 result = float4(payload.radiance, 1);
 	
     if (frame.x == 0)
@@ -75,7 +93,7 @@ void rgen()
 [shader("miss")]
 void miss(inout Payload payload)
 {
-    payload.radiance = float3(0.1, 0.1, 0.3); // sky color
+    payload.done = true;
 }
 
 // ------------------------------------------------------------
@@ -85,7 +103,7 @@ void miss(inout Payload payload)
 [shader("anyhit")]
 void ahit(inout Payload payload, in HitAttributes attr)
 {
-    payload.hit = true;
+    payload.done = true;
 }
 
 // ------------------------------------------------------------
@@ -129,11 +147,62 @@ struct Frame
 
 struct ShadingInfo
 {
-    float2 uv;          // UV coordinates for texture mapping
-    Frame shading_frame; // the coordinate basis for shading
+    float2 uv;            // UV coordinates for texture mapping
+    Frame shading_frame;  // the coordinate basis for shading
     float mean_curvature; // 0.5 * (dN/du + dN/dv)
     float inv_uv_size;
 };
+
+__prefix Frame operator -(Frame frame)
+{
+    return { -frame.x, -frame.y, -frame.n };
+}
+
+float3 to_world(in Frame frame, float3 v) {
+    return frame.x * v.x + frame.y * v.y + frame.n * v.z;
+}
+
+float3 sample_cos_hemisphere(float2 rnd_param) {
+    float phi = 2 * float.getPi() * rnd_param[0];
+    float tmp = sqrt(clamp(1 - rnd_param[1], 0, 1));
+    return {
+        cos(phi) * tmp, sin(phi) * tmp,
+        sqrt(clamp(rnd_param[1], 0, 1))
+    };
+}
+
+float3 eval_lambertian(in Lambertian bsdf, in Frame shading_frame, float3 geometric_normal, float3 dir_in, float3 dir_out) {
+    if (dot(geometric_normal, dir_in) < 0 ||
+        dot(geometric_normal, dir_out) < 0) {
+        // No light below the surface
+        return 0;
+    }
+    // Sometimes the shading normal can be inconsistent with
+    // the geometry normal. We flip the shading frame in that
+    // case so that we don't produces "black fringes".
+    Frame frame = shading_frame;
+    if (dot(frame.n, dir_in) < 0) {
+        frame = -frame;
+    }
+
+    return fmax(dot(frame.n, dir_out), 0) * bsdf.reflectance / float.getPi();
+}
+
+float pdf_lamberian(in Lambertian bsdf, in Frame shading_frame, float3 geometric_normal, float3 dir_in, float3 dir_out) {
+    if (dot(geometric_normal, dir_in) < 0 ||
+        dot(geometric_normal, dir_out) < 0) {
+        // No light below the surface
+        return 0;
+    }
+    // Flip the shading frame if it is inconsistent with the geometry normal
+    Frame frame = shading_frame;
+    if (dot(frame.n, dir_in) < 0) {
+        frame = -frame;
+    }
+
+    // For Lambertian, we importance sample the cosine hemisphere domain.
+    return fmax(dot(frame.n, dir_out), 0) / float.getPi();
+}
 
 void coordinate_system(in float3 n, out float3 x, out float3 y) {
     if (n[2] < float(-1 + 1e-6)) {
@@ -152,7 +221,7 @@ vector<float, N> interpolate<int N>(vector<float, N> a, vector<float, N> b, vect
     return a * bary.x + b * bary.y + c * (1 - bary.x - bary.y);
 }
 
-ShadingInfo triangle_mesh_shading_info(Shape shape, float2 bary)
+ShadingInfo triangle_mesh_shading_info(Shape shape, out float3 ng, float2 bary)
 {
     // Get UVs of the three vertices
     uint primitive_index = PrimitiveIndex() + shape.index_offset;
@@ -173,7 +242,7 @@ ShadingInfo triangle_mesh_shading_info(Shape shape, float2 bary)
            p1 = b_Positions.Load(index[1]),
            p2 = b_Positions.Load(index[2]);
 
-    float3 geometric_normal = normalize(cross(p1 - p0, p2 - p0));
+    ng = normalize(cross(p1 - p0, p2 - p0));
 
     // We want to derive dp/du & dp/dv. We have the following
     // relation:
@@ -206,12 +275,12 @@ ShadingInfo triangle_mesh_shading_info(Shape shape, float2 bary)
         dpdv = dpds * dsdv + dpdt * dtdv;
     } else {
         // degenerate uvs. Use an arbitrary coordinate system
-        coordinate_system(geometric_normal, dpdu, dpdv);
+        coordinate_system(ng, dpdu, dpdv);
     }
 
     // Now let's get the shading normal & mean_curvature.
     // By default it is the geometry normal and we have zero curvature.
-    float3 shading_normal = geometric_normal;
+    float3 shading_normal = ng;
     float mean_curvature = 0;
     float3 tangent, bitangent;
     // However if we have vertex normals, that overrides the geometry normal.
@@ -251,10 +320,34 @@ void chit(inout Payload payload, in HitAttributes attr)
 {
     uint instance_id = InstanceID();
     Shape shape = shape_buffer[instance_id];
-    // float3 reflectance = material_buffer[shape.material_id].reflectance;
-    // payload.throughput *= reflectance;
-    // payload.radiance =
-    ShadingInfo shading_info = triangle_mesh_shading_info(shape, attr.barycentrics);
-    payload.radiance = shading_info.shading_frame.n;
-    payload.hit = 1;
+    Lambertian material = material_buffer[shape.material_id];
+
+    if (shape.area_light_id >= 0)
+    {
+        payload.radiance += payload.throughput * float3(10, 10, 10);
+        payload.done = true;
+        return;
+	}
+
+    float3 geometric_normal;
+    ShadingInfo shading_info = triangle_mesh_shading_info(shape, geometric_normal, attr.barycentrics);
+
+    // For Lambertian, we importance sample the cosine hemisphere domain.
+    if (dot(geometric_normal, payload.dir) < 0) {
+        // Incoming direction is below the surface.
+        return;
+    }
+    // Flip the shading frame if it is inconsistent with the geometry normal
+    Frame frame = shading_info.shading_frame;
+    if (dot(frame.n, payload.dir) < 0) {
+        frame = -frame;
+    }
+
+    float3 dir_out = to_world(frame, sample_cos_hemisphere(payload.rng.next_float2()));
+
+    payload.throughput *= eval_lambertian(material, shading_info.shading_frame, geometric_normal, payload.dir, dir_out)
+	                    / pdf_lamberian(material, shading_info.shading_frame, geometric_normal, payload.dir, dir_out);
+
+    payload.origin = WorldRayOrigin() + WorldRayDirection() * RayTCurrent();
+    payload.dir = dir_out;
 }

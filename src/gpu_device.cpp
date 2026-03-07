@@ -303,7 +303,7 @@ GPUDevice::~GPUDevice()
 void GPUDevice::attach(RGFW_window* window, Scene* scene)
 {
 	QueueFamilyIndices indices;
-
+	
 	LOG("Creating Window Surface...");
 	{
 		assert(RGFW_window_createSurface_Vulkan(window, instance, &surface) == VK_SUCCESS);
@@ -365,6 +365,7 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 		device_address_features.bufferDeviceAddress = VK_TRUE;
 		acceleration_structure_features.accelerationStructure = VK_TRUE;
 		ray_tracing_features.rayTracingPipeline = VK_TRUE;
+		robustness_features.nullDescriptor = VK_TRUE;
 
 		// Create logical device with queues and feature pNext
 		float priority = 1.0f;
@@ -455,7 +456,7 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 			.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
 			.preTransform = capabilities.currentTransform,
 			.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
-			.presentMode = VK_PRESENT_MODE_FIFO_KHR,
+			.presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR,
 			.clipped = VK_TRUE,
 		};
 		if (indices.graphicsFamily.value() != indices.presentFamily.value()) {
