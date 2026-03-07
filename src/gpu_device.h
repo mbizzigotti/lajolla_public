@@ -4,6 +4,7 @@
 #define RGFW_VULKAN
 #define NOMINMAX
 #include "3rdparty/RGFW.h"
+#include "shaders/shared.slang"
 
 struct VulkanBuffer {
 	VkBuffer       buffer{ 0 };
@@ -24,22 +25,29 @@ struct VulkanAccelerationStructure {
 	void Destroy(struct GPUDevice& gpu);
 };
 
-struct VulkanTriangleMesh {
-	VulkanBuffer vertex_buffer{ 0 };
-	VulkanBuffer index_buffer{ 0 };
-};
-
 struct VulkanRawBuffer {
 	std::vector<uint8_t> data;
 	VulkanBuffer buffer;
+	VkDeviceAddress device_address;
 
 	void Create(struct GPUDevice& gpu, VkFlags usage);
-	void Destroy(struct GPUDevice& gpu);
+	void CreateFromStaging(struct GPUDevice& gpu, VkFlags usage);
+	void GetDeviceAddress(VkDevice device);
 
 	template <typename T>
 	void Add(const T& t) {
 		uint8_t* bytes = (uint8_t*)(&t);
 		uint32_t size = sizeof(T);
+		data.reserve(data.size() + size);
+		for (uint32_t i = 0; i < size; ++i)
+			data.emplace_back(bytes[i]);
+	}
+
+	template <typename T>
+	void AddArray(const std::vector<T>& array) {
+		uint8_t* bytes = (uint8_t*)(array.data());
+		uint32_t size = array.size() * sizeof(T);
+		data.reserve(data.size() + size);
 		for (uint32_t i = 0; i < size; ++i)
 			data.emplace_back(bytes[i]);
 	}
@@ -88,14 +96,16 @@ struct GPUDevice {
 	VkStridedDeviceAddressRegionKHR rgen_sbt{};
 	VkStridedDeviceAddressRegionKHR miss_sbt{};
 	VkStridedDeviceAddressRegionKHR chit_sbt{};
-	VulkanBuffer                    instance_buffer{};
+	VulkanRawBuffer                 instance_buffer{};
 	VulkanBuffer                    camera_buffer{};
 	VulkanRawBuffer                 material_buffer{};
 	VulkanRawBuffer                 shape_buffer{};
+	VulkanRawBuffer                 vertex_buffer{};
+	VulkanRawBuffer                 index_buffer{};
+	VulkanRawBuffer                 uv_buffer{};
+	VulkanRawBuffer                 normal_buffer{};
 	
-	std::vector<VkAccelerationStructureInstanceKHR>        instances;
-	std::vector<VulkanAccelerationStructure>               bass;
-	std::vector<VulkanTriangleMesh>                        triangle_meshes;
+	std::vector<VulkanAccelerationStructure> bass;
 	
 	struct UniformData
 	{
@@ -112,7 +122,8 @@ struct GPUDevice {
 	void attach(RGFW_window* window, Scene *scene);
 	void render(RGFW_window *window);
 
-	void add_shape(uint32_t index, const Shape &shape);
+	void add_shape_data(const Shape &shape);
+	void add_shape(uint32_t index, const GPU::Shape& gpu_shape, const Shape &shape);
 
 	uint32_t find_memory_type(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
 		VkPhysicalDeviceMemoryProperties memProps;

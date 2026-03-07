@@ -39,6 +39,10 @@ struct Shape
 	int area_light_id;
     int interior_medium_id;
     int exterior_medium_id;
+    uint vertex_offset;
+    uint index_offset;
+    int has_uvs;
+    int has_normals;
 };
 
 interface Material {};

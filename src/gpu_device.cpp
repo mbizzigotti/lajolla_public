@@ -3,7 +3,6 @@
 #define RGFW_IMGUI_IMPLEMENTATION
 #include "3rdparty/imgui_impl_rgfw.h"
 #include "3rdparty/imgui_impl_vulkan.h"
-#include "shaders/shared.slang"
 #include <fstream>
 
 #ifdef ERROR
@@ -68,36 +67,20 @@ VkDeviceAddress get_buffer_device_address(VkDevice device, VkBuffer buffer) {
 	return vkGetBufferDeviceAddress(device, &info);
 }
 
-void GPUDevice::add_shape(uint32_t index, const Shape &shape) {
-	VulkanTriangleMesh triangle_mesh{};
+void GPUDevice::add_shape_data(const Shape& shape)
+{
+	const TriangleMesh& mesh = std::get<TriangleMesh>(shape);
+	for (const Vector3& position : mesh.positions)
+		vertex_buffer.Add(Vector3f(position));
+	for (const Vector3i& tri: mesh.indices)
+		index_buffer.Add(tri);
+	// index_buffer.AddArray(mesh.indices);
+	// for (const Vector3& normal : mesh.normals)
+	// 	vertex_buffer.Add(Vector3f(normals));
+}
 
-	const TriangleMesh &mesh = std::get<TriangleMesh>(shape);
-	TVector3<float>* positions = new TVector3<float>[mesh.positions.size()];
-
-	for (int i = 0; i < mesh.positions.size(); ++i)
-		positions[i] = TVector3<float>(mesh.positions[i]);
-
-	size_t vertex_size = mesh.positions.size() * sizeof(TVector3<float>);
-	size_t index_size = mesh.indices.size() * sizeof(Vector3i);
-
-	createBuffer(vertex_size, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, triangle_mesh.vertex_buffer.buffer, triangle_mesh.vertex_buffer.memory);
-	createBuffer(index_size, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, triangle_mesh.index_buffer.buffer, triangle_mesh.index_buffer.memory);
-
-	// staging buffers to upload data
-	VkBuffer vStaging; VkDeviceMemory vStagingMem; createBuffer(vertex_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, vStaging, vStagingMem);
-	VkBuffer iStaging; VkDeviceMemory iStagingMem; createBuffer(index_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, iStaging, iStagingMem);
-	void* p; vkMapMemory(device, vStagingMem, 0, vertex_size, 0, &p); memcpy(p, positions, vertex_size); vkUnmapMemory(device, vStagingMem);
-	vkMapMemory(device, iStagingMem, 0, index_size, 0, &p); memcpy(p, mesh.indices.data(), index_size); vkUnmapMemory(device, iStagingMem);
-
-	VkCommandBuffer cmd = temp_command_buffer();
-	VkBufferCopy copyRegion{ 0,0,vertex_size }; vkCmdCopyBuffer(cmd, vStaging, triangle_mesh.vertex_buffer, 1, &copyRegion);
-	VkBufferCopy copyRegion2{ 0,0,index_size }; vkCmdCopyBuffer(cmd, iStaging, triangle_mesh.index_buffer, 1, &copyRegion2);
-	flush_and_destroy_command_buffer(cmd);
-
-	vkDestroyBuffer(device, vStaging, 0);
-	vkFreeMemory(device, vStagingMem, 0);
-	vkDestroyBuffer(device, iStaging, 0);
-	vkFreeMemory(device, iStagingMem, 0);
+void GPUDevice::add_shape(uint32_t index, const GPU::Shape &gpu_shape, const Shape &shape) {
+	const TriangleMesh& mesh = std::get<TriangleMesh>(shape);
 
 	VkAccelerationStructureGeometryKHR geometry = {
 		.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR,
@@ -106,11 +89,11 @@ void GPUDevice::add_shape(uint32_t index, const Shape &shape) {
 			.triangles = {
 				.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR,
 				.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT,
-				.vertexData = {.deviceAddress = get_buffer_device_address(device, triangle_mesh.vertex_buffer)},
-				.vertexStride = sizeof(TVector3<float>),
+				.vertexData = {.deviceAddress = vertex_buffer.device_address + gpu_shape.vertex_offset * sizeof(Vector3f)},
+				.vertexStride = sizeof(Vector3f),
 				.maxVertex = (uint32_t)mesh.positions.size(),
 				.indexType = VK_INDEX_TYPE_UINT32,
-				.indexData = {.deviceAddress = get_buffer_device_address(device, triangle_mesh.index_buffer)},
+				.indexData = {.deviceAddress = index_buffer.device_address + gpu_shape.index_offset * sizeof(Vector3i)},
 			}
 		},
 		.flags = VK_GEOMETRY_OPAQUE_BIT_KHR,
@@ -177,8 +160,7 @@ void GPUDevice::add_shape(uint32_t index, const Shape &shape) {
 	};
 
 	bass.emplace_back(bas);
-	instances.emplace_back(asInstance);
-	triangle_meshes.emplace_back(triangle_mesh);
+	instance_buffer.Add(asInstance);
 }
 
 struct filter_convert_op {
@@ -219,9 +201,30 @@ struct material_convert_op {
 };
 
 struct shape_convert_op {
-	GPU::Shape operator()(const auto& shape) {
-		return { shape.material_id, shape.area_light_id, shape.interior_medium_id, shape.exterior_medium_id };
+	GPU::Shape operator()(const Sphere& shape) {
+		return {
+			shape.material_id,
+			shape.area_light_id,
+			shape.interior_medium_id,
+			shape.exterior_medium_id,
+		};
 	}
+	GPU::Shape operator()(const TriangleMesh& shape) {
+		GPU::Shape result = {
+			shape.material_id,
+			shape.area_light_id,
+			shape.interior_medium_id,
+			shape.exterior_medium_id,
+			vertex_offset,
+			index_offset,
+			// (shape.normals.size() > 0) ? 1 : 0,
+		};
+		vertex_offset += shape.positions.size();
+		index_offset += shape.indices.size();
+		return result;
+	}
+	uint32_t& vertex_offset;
+	uint32_t& index_offset;
 };
 
 GPUDevice::GPUDevice()
@@ -273,11 +276,9 @@ GPUDevice::~GPUDevice()
 	if (device) vkDeviceWaitIdle(device);
 	if (descriptor_pool) vkDestroyDescriptorPool(device, descriptor_pool, 0);
 	camera_buffer.Destroy(device);
-	instance_buffer.Destroy(device);
-	for (VulkanTriangleMesh mesh : triangle_meshes) {
-		mesh.vertex_buffer.Destroy(device);
-		mesh.index_buffer.Destroy(device);
-	}
+	instance_buffer.buffer.Destroy(device);
+	vertex_buffer.buffer.Destroy(device);
+	index_buffer.buffer.Destroy(device);
 	sbt_buffer.Destroy(device);
 	tas.Destroy(*this);
 	for (auto& bas: bass) bas.Destroy(*this);
@@ -349,10 +350,12 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 		VkPhysicalDeviceBufferDeviceAddressFeatures      device_address_features         { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES };
 		VkPhysicalDeviceAccelerationStructureFeaturesKHR acceleration_structure_features { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR };
 		VkPhysicalDeviceRayTracingPipelineFeaturesKHR    ray_tracing_features            { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR };
+		VkPhysicalDeviceRobustness2FeaturesEXT           robustness_features             { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT };
 
 		device_features                 .pNext = &device_address_features;
 		device_address_features         .pNext = &acceleration_structure_features;
 		acceleration_structure_features .pNext = &ray_tracing_features;
+		ray_tracing_features            .pNext = &robustness_features;
 
 		auto vkGetPhysicalDeviceFeatures2 = (PFN_vkGetPhysicalDeviceFeatures2)vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceFeatures2");
 		assert(vkGetPhysicalDeviceFeatures2);
@@ -388,6 +391,7 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 			VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
 			VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
 			VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME,
+			VK_EXT_ROBUSTNESS_2_EXTENSION_NAME,
 		};
 
 		VkDeviceCreateInfo device_info {
@@ -553,6 +557,22 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 				.binding = 4,
 				.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 			},
+			{
+				.binding = 5,
+				.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			},
+			{
+				.binding = 6,
+				.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			},
+			{
+				.binding = 7,
+				.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			},
+			{
+				.binding = 8,
+				.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			},
 		};
 		for (auto& b : bindings) {
 			b.descriptorCount = 1;
@@ -583,7 +603,7 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 
 	LOG("Loading Shaders...");
 	{
-		shader = load_shader_from_file(device, "basic.spv");
+		shader = load_shader_from_file(device, "../basic.spv");
 	}
 	LOG("Creating Ray Tracing Pipeline...");
 	{
@@ -606,14 +626,28 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 				.module = shader,
 				.pName = "chit",
 			},
+			{
+				.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+				.stage = VK_SHADER_STAGE_ANY_HIT_BIT_KHR,
+				.module = shader,
+				.pName = "ahit",
+			},
 		};
 
-		// Shader groups: raygen(0), miss(1), hitgroup(2)
+		// Shader groups: raygen(0), missprimary(1), missshadow(2), hitgroup(3), shadowgroup(4)
 		VkRayTracingShaderGroupCreateInfoKHR groups[] {
 			{
 				.sType              = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR,
 				.type               = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR,
 				.generalShader      = 0,
+				.closestHitShader   = VK_SHADER_UNUSED_KHR,
+				.anyHitShader       = VK_SHADER_UNUSED_KHR,
+				.intersectionShader = VK_SHADER_UNUSED_KHR,
+			},
+			{
+				.sType              = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR,
+				.type               = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR,
+				.generalShader      = 1,
 				.closestHitShader   = VK_SHADER_UNUSED_KHR,
 				.anyHitShader       = VK_SHADER_UNUSED_KHR,
 				.intersectionShader = VK_SHADER_UNUSED_KHR,
@@ -634,6 +668,14 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 				.anyHitShader       = VK_SHADER_UNUSED_KHR,
 				.intersectionShader = VK_SHADER_UNUSED_KHR,
 			},
+			{
+				.sType              = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR,
+				.type               = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR,
+				.generalShader      = VK_SHADER_UNUSED_KHR,
+				.closestHitShader   = VK_SHADER_UNUSED_KHR,
+				.anyHitShader       = 3,
+				.intersectionShader = VK_SHADER_UNUSED_KHR,
+			},
 		};
 
 		VkRayTracingPipelineCreateInfoKHR pipeline_info {
@@ -650,36 +692,68 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 
 	vkDestroyShaderModule(device, shader, 0);
 
+	LOG("Creating Constant Buffers...");
+	{
+		createBuffer(sizeof(GPU::Camera), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, camera_buffer.buffer, camera_buffer.memory);
+		void* data;
+		vkMapMemory(device, camera_buffer.memory, 0, VK_WHOLE_SIZE, 0, &data);
+		GPU::Camera camera = convert(scene->camera);
+		memcpy(data, &camera, sizeof(camera));
+		vkUnmapMemory(device, camera_buffer.memory);
+
+		for (const Material& material : scene->materials) {
+			std::visit(material_convert_op{ material_buffer }, material);
+		}
+		material_buffer.Create(*this, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+
+		uint32_t vertex_offset = 0;
+		uint32_t index_offset = 0;
+		for (const Shape& shape : scene->shapes) {
+			shape_buffer.Add(std::visit(shape_convert_op{ vertex_offset, index_offset }, shape));
+		}
+		shape_buffer.Create(*this, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+
+		{
+			for (const Shape& shape : scene->shapes) {
+				add_shape_data(shape);
+			}
+			VkFlags usage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+						  | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+						  | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+						  | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+			vertex_buffer.CreateFromStaging(*this, usage);
+			vertex_buffer.GetDeviceAddress(device);
+			index_buffer.CreateFromStaging(*this, usage);
+			index_buffer.GetDeviceAddress(device);
+
+			uv_buffer.CreateFromStaging(*this, usage);
+			normal_buffer.CreateFromStaging(*this, usage);
+		}
+		{
+			uint32_t vertex_offset = 0, index_offset = 0;
+			for (uint32_t i = 0; i < scene->shapes.size(); ++i) {
+				const Shape& shape = scene->shapes[i];
+				GPU::Shape gpu_shape = std::visit(shape_convert_op{ vertex_offset, index_offset }, shape);
+				add_shape(i, gpu_shape, shape);
+			}
+			VkFlags usage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+						  | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+						  | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+			instance_buffer.CreateFromStaging(*this, usage);
+			instance_buffer.GetDeviceAddress(device);
+		}
+	}
 	LOG("Creating Acceleration Structures...");
 	{
-		for (uint32_t i = 0; i < scene->shapes.size(); ++i) {
-			add_shape(i, scene->shapes[i]);
-		}
-
-		// create instance buffer
-		size_t size = instances.size() * sizeof(VkAccelerationStructureInstanceKHR);
-		createBuffer(size, VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, instance_buffer.buffer, instance_buffer.memory);
-		VkBuffer instStaging; VkDeviceMemory instStagingMem; createBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, instStaging, instStagingMem);
-		void* p; vkMapMemory(device, instStagingMem, 0, size, 0, &p); memcpy(p, instances.data(), size); vkUnmapMemory(device, instStagingMem);
-		// copy
-		{
-			VkCommandBuffer cmd = temp_command_buffer();
-			VkBufferCopy creg{ 0,0,size }; vkCmdCopyBuffer(cmd, instStaging, instance_buffer, 1, &creg);
-			flush_and_destroy_command_buffer(cmd);
-		}
-
-		vkDestroyBuffer(device, instStaging, 0);
-		vkFreeMemory(device, instStagingMem, 0);
-
-		// Build TLAS
-		VkAccelerationStructureGeometryInstancesDataKHR instancesData{ VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR };
-		instancesData.data.deviceAddress = get_buffer_device_address(device, instance_buffer);
+		VkAccelerationStructureGeometryInstancesDataKHR instancesData = {
+			.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR,
+			.data = {.deviceAddress = instance_buffer.device_address},
+		};
 		VkAccelerationStructureGeometryKHR iGeom = {
 			.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR,
 			.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR,
 			.geometry = { .instances = instancesData },
 		};
-
 		VkAccelerationStructureBuildGeometryInfoKHR tBuildInfo = {
 			.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
 			.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR,
@@ -687,7 +761,7 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 			.geometryCount = 1,
 			.pGeometries = &iGeom,
 		};
-		uint32_t maxPrimCountsTLAS[10] = { 10 };
+		uint32_t maxPrimCountsTLAS[10] = { 1000 };
 		VkAccelerationStructureBuildSizesInfoKHR tSizes{ VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR };
 		vkGetAccelerationStructureBuildSizesKHR(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &tBuildInfo, maxPrimCountsTLAS, &tSizes);
 
@@ -695,18 +769,8 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 		VkAccelerationStructureCreateInfoKHR tcreate{ VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR }; tcreate.buffer = tas.buffer.buffer; tcreate.size = tSizes.accelerationStructureSize; tcreate.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
 		vkCreateAccelerationStructureKHR(device, &tcreate, nullptr, &tas.handle);
 
-#if 0
-		uint32_t primitive_count = 1;
-		VkAccelerationStructureBuildRangeInfoKHR build_range{
-			.primitiveCount = primitive_count,
-		};
-		const VkAccelerationStructureBuildRangeInfoKHR* pRanges = &build_range;
-
-		VkAccelerationStructureBuildSizesInfoKHR sizeInfo{ VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR };
-		vkGetAccelerationStructureBuildSizesKHR(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &tBuildInfo, &primitive_count, &sizeInfo);
-#endif
 		VkAccelerationStructureBuildRangeInfoKHR build_range = {
-			.primitiveCount = (uint32_t)instances.size(),
+			.primitiveCount = (uint32_t)(scene->shapes.size()),
 		};
 		const VkAccelerationStructureBuildRangeInfoKHR* pRanges = &build_range;
 
@@ -739,7 +803,7 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 		uint32_t handleSize = rtprops.shaderGroupHandleSize;
 		uint32_t baseAlignment = rtprops.shaderGroupBaseAlignment;
 
-		uint32_t groupCount = 3;
+		uint32_t groupCount = 5;
 		std::vector<char> shaderHandleStorage(groupCount * handleSize);
 		vkGetRayTracingShaderGroupHandlesKHR(device, pipeline, 0, groupCount, shaderHandleStorage.size(), shaderHandleStorage.data());
 
@@ -755,26 +819,7 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 
 		rgen_sbt = { .deviceAddress = sbtAddr + 0 * baseAlignment, .stride = baseAlignment, .size = baseAlignment };
 		miss_sbt = { .deviceAddress = sbtAddr + 1 * baseAlignment, .stride = baseAlignment, .size = baseAlignment };
-		chit_sbt = { .deviceAddress = sbtAddr + 2 * baseAlignment, .stride = baseAlignment, .size = baseAlignment };
-	}
-	LOG("Creating Constant Buffers...");
-	{
-		createBuffer(sizeof(GPU::Camera), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, camera_buffer.buffer, camera_buffer.memory);
-		void *data;
-		vkMapMemory(device, camera_buffer.memory, 0, VK_WHOLE_SIZE, 0, &data);
-		GPU::Camera camera = convert(scene->camera);
-		memcpy(data, &camera, sizeof(camera));
-		vkUnmapMemory(device, camera_buffer.memory);
-
-		for (const Material& material : scene->materials) {
-			std::visit(material_convert_op{material_buffer}, material);
-		}
-		material_buffer.Create(*this, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-		
-		for (const Shape& shape : scene->shapes) {
-			shape_buffer.Add(std::visit(shape_convert_op{}, shape));
-		}
-		shape_buffer.Create(*this, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+		chit_sbt = { .deviceAddress = sbtAddr + 3 * baseAlignment, .stride = baseAlignment, .size = baseAlignment };
 	}
 	LOG("Creating Descriptor Set...");
 	{
@@ -822,6 +867,30 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 			.range = VK_WHOLE_SIZE,
 		};
 
+		VkDescriptorBufferInfo vertex_buffer_info = {
+			.buffer = vertex_buffer.buffer,
+			.offset = 0,
+			.range = VK_WHOLE_SIZE,
+		};
+
+		VkDescriptorBufferInfo index_buffer_info = {
+			.buffer = index_buffer.buffer,
+			.offset = 0,
+			.range = VK_WHOLE_SIZE,
+		};
+
+		VkDescriptorBufferInfo uv_buffer_info = {
+			.buffer = uv_buffer.buffer,
+			.offset = 0,
+			.range = VK_WHOLE_SIZE,
+		};
+
+		VkDescriptorBufferInfo normal_buffer_info = {
+			.buffer = normal_buffer.buffer,
+			.offset = 0,
+			.range = VK_WHOLE_SIZE,
+		};
+
 		VkWriteDescriptorSet writes[] = {
 			{
 				.pNext = &as_info,
@@ -842,6 +911,22 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 			{
 				.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 				.pBufferInfo = &shape_buffer_info,
+			},
+			{
+				.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				.pBufferInfo = &vertex_buffer_info,
+			},
+			{
+				.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				.pBufferInfo = &index_buffer_info,
+			},
+			{
+				.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				.pBufferInfo = &uv_buffer_info,
+			},
+			{
+				.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				.pBufferInfo = &normal_buffer_info,
 			},
 		};
 		for (int i = 0; i < std::size(writes); ++i) {
@@ -1021,10 +1106,36 @@ void VulkanRawBuffer::Create(GPUDevice& gpu, VkFlags usage)
 	vkUnmapMemory(gpu.device, buffer.memory);
 }
 
+void VulkanRawBuffer::CreateFromStaging(GPUDevice& gpu, VkFlags usage)
+{
+	if (data.size() <= 0) return;
+
+	gpu.createBuffer(data.size(), usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, buffer.buffer, buffer.memory);
+
+	VulkanBuffer staging;
+	gpu.createBuffer(data.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, staging.buffer, staging.memory);
+	void* p;
+	vkMapMemory(gpu.device, staging.memory, 0, data.size(), 0, &p);
+	memcpy(p, data.data(), data.size());
+	vkUnmapMemory(gpu.device, staging.memory);
+
+	VkCommandBuffer cmd = gpu.temp_command_buffer();
+	VkBufferCopy copyRegion{ 0, 0, data.size() };
+	vkCmdCopyBuffer(cmd, staging, buffer, 1, &copyRegion);
+	gpu.flush_and_destroy_command_buffer(cmd);
+
+	staging.Destroy(gpu.device);
+}
+
 void VulkanAccelerationStructure::Destroy(struct GPUDevice& gpu)
 {
 	if (handle) gpu.vkDestroyAccelerationStructureKHR(gpu.device, handle, 0);
 	buffer.Destroy(gpu.device);
+}
+
+void VulkanRawBuffer::GetDeviceAddress(VkDevice device)
+{
+	device_address = get_buffer_device_address(device, buffer);
 }
 
 void VulkanBuffer::Destroy(VkDevice device)

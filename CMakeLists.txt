@@ -25,7 +25,7 @@ set(SHADER_OUTPUT ${CMAKE_BINARY_DIR}/basic.spv)
 
 add_custom_command(
     OUTPUT ${SHADER_OUTPUT}
-    COMMAND ${SLANGC_EXECUTABLE} ${SHADER_SOURCE} -target spirv -profile sm_6_6 -emit-spirv-directly -fvk-use-entrypoint-name -o ${SHADER_OUTPUT}
+    COMMAND ${SLANGC_EXECUTABLE} ${SHADER_SOURCE} -target spirv -profile sm_6_6 -emit-spirv-directly -fvk-use-scalar-layout -fvk-use-entrypoint-name -o ${SHADER_OUTPUT}
     DEPENDS ${SHADER_SOURCE} ${SHADER_SOURCE_DIR}/camera.slang ${SHADER_SOURCE_DIR}/shared.slang
     COMMENT "Shader: ${SHADER_SOURCE} -> ${SHADER_OUTPUT}"
 )
