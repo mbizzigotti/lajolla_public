@@ -55,6 +55,7 @@ Image3 imread3(const fs::path &filename);
 /// Save an image to a file.
 /// Supported formats: PFM & exr
 void imwrite(const fs::path &filename, const Image3 &image);
+void imwrite_raw(const fs::path& filename, const float* data, int width, int height);
 
 inline Image3 to_image3(const Image1 &img) {
     Image3 out(img.width, img.height);

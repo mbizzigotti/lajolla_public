@@ -12,12 +12,17 @@ struct PointAndNormal
 
 [ForceInline]
 bool is_envmap(Light light) {
-    return light.shape_id < 0;
+    return light.shape_id == -1;
 }
 
 int sample_light(float u)
 {
     return sample(scene.light_dist, u);
+}
+
+float light_pmf(int light_id)
+{
+    return pmf(scene.light_dist, light_id);
 }
 
 PointAndNormal sample_point_on_envmap(float3 rnd_param)
@@ -94,10 +99,10 @@ float3 emission_envmap(float3 view_dir, PointAndNormal point_on_light, float vie
 PointAndNormal sample_point_on_triangle_mesh(in TableDist1D triangle_sampler, in Shape shape, float3 ref_point, float3 rnd_param)
 {
     int tri_id = sample(triangle_sampler, rnd_param.z);
-    uint3 index = scene.triangles.Load<uint3>(tri_id + shape.index_offset);
-    float3 v0 = scene.positions.Load<float3>(index[0] + shape.vertex_offset);
-    float3 v1 = scene.positions.Load<float3>(index[1] + shape.vertex_offset);
-    float3 v2 = scene.positions.Load<float3>(index[2] + shape.vertex_offset);
+    uint3 index = scene.triangles.LoadByteOffset<uint3>((tri_id + shape.index_offset) * sizeof(uint3));
+    float3 v0 = scene.positions.LoadByteOffset<float3>((index[0] + shape.vertex_offset) * sizeof(float3));
+    float3 v1 = scene.positions.LoadByteOffset<float3>((index[1] + shape.vertex_offset) * sizeof(float3));
+    float3 v2 = scene.positions.LoadByteOffset<float3>((index[2] + shape.vertex_offset) * sizeof(float3));
     float3 e1 = v1 - v0;
     float3 e2 = v2 - v0;
     // https://pbr-book.org/3ed-2018/Monte_Carlo_Integration/2D_Sampling_with_Multidimensional_Transformations#SamplingaTriangle

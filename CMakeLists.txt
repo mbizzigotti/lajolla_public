@@ -37,13 +37,15 @@ addShaderCompile(miss Intersection.slang)
 addShaderCompile(miss_shadow Intersection.slang)
 addShaderCompile(chit_tri Intersection.slang)
 addShaderCompile(ahit Intersection.slang)
+addShaderCompile(tonemap Tonemap.slang)
 
 add_custom_target(CompileShaders ALL DEPENDS
 			${CMAKE_BINARY_DIR}/rgen_path_tracing.spv
 			${CMAKE_BINARY_DIR}/miss.spv
 			${CMAKE_BINARY_DIR}/miss_shadow.spv
 			${CMAKE_BINARY_DIR}/chit_tri.spv
-			${CMAKE_BINARY_DIR}/ahit.spv)
+			${CMAKE_BINARY_DIR}/ahit.spv
+			${CMAKE_BINARY_DIR}/tonemap.spv)
 
 include_directories(${EMBREE_INCLUDE_PATH})
 link_libraries(${EMBREE_LIBRARY} Vulkan::Vulkan)

@@ -36,6 +36,21 @@ struct Scene
     property Camera         camera     { get { return info.camera; } }
     property Options        options    { get { return info.options; } }
     property TableDist1D    light_dist { get { return info.light_dist; } }
+
+    [ForceInline] float shadow_epsilon()       { return min(info.bounds.radius * 1e-5, 0.01); }
+	[ForceInline] float intersection_epsilon() { return min(info.bounds.radius * 1e-5, 0.01); }
+
+    RayDesc make_shadow_ray(float3 origin, float3 point)
+    {
+        float3 dir_light = point - origin;
+        float d = length(dir_light);
+        return {
+		/* Origin    */ origin + shadow_epsilon() * (dir_light / d),
+		/* TMin      */ 0,
+		/* Direction */ dir_light / d,
+		/* TMax      */ (1 - shadow_epsilon()) * d
+        };
+	}
 };
 
 ParameterBlock<Scene> scene;

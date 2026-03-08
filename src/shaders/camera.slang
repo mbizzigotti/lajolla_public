@@ -42,13 +42,8 @@ extension Camera
         // so let's remap them using importance sampling.
         float2 offset = 0.5 * filter.sample(float2(dx, dy));
         // Filters are placed at pixel centers.
-        float2 remapped_pos = {
-            (float(pixel_pos.x) + 0.5 + offset.x) / float(dim.x),
-            (float(pixel_pos.y) + 0.5 + offset.y) / float(dim.y)
-		};
-
-        float3 pt = xform_point(sample_to_cam,
-                                 float3(remapped_pos[0], remapped_pos[1], 0));
+        float2 remapped_pos = (float2(pixel_pos) + 0.5 + offset) / float2(dim);
+        float3 pt = xform_point(sample_to_cam, float3(remapped_pos.xy, 0));
         float3 dir = normalize(pt);
         RayDesc ray;
         ray.Origin = xform_point(cam_to_world, float3(0, 0, 0));

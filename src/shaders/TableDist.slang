@@ -1,5 +1,6 @@
 import shared;
 import Scene;
+import Utils;
 
 struct FloatArray
 {
@@ -27,10 +28,8 @@ extension TableDist2D
 int sample(in TableDist1D table, float rnd_param)
 {
     int size = table.pmf.count;
-    // float *ptr = std::upper_bound(table.cdf.data(), table.cdf.data() + size + 1, rnd_param);
-    // int offset = std::clamp(int(ptr - table.cdf.data() - 1), 0, size - 1);
-    // return offset;
-    return 0;
+    int k = upper_bound(scene.values, table.cdf.offset, table.cdf.count, rnd_param);
+    return clamp(int(k - 1), 0, size - 1);
 }
 
 float pmf(in TableDist1D table, int id)

@@ -13,12 +13,13 @@
 #define LOAD_VULKAN_FUNCTION(NAME) \
 	assert(NAME = (PFN_##NAME)vkGetDeviceProcAddr(device, #NAME));
 
-
-constexpr bool is_power_of_two(u64 num) {
+template <typename T>
+constexpr bool is_power_of_two(T num) {
 	return ((num) & (num - 1)) == 0;
 }
 
-constexpr u64 align(u64 current, u64 alignment) {
+template <typename T>
+constexpr T align(T current, T alignment) {
 	assert(is_power_of_two(alignment));
 	return (current + alignment - 1) & ~(alignment - 1);
 }
@@ -47,6 +48,8 @@ QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device, VkSurfaceKHR surfa
 }
 
 VkExtent3D extent3d(VkExtent2D extent2d) { return { extent2d.width, extent2d.height, 1 }; }
+
+VkImageSubresourceLayers default_image_subresource() { return { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 }; }
 
 static VkShaderModule load_shader_from_file(VkDevice device, const char* path) {
 	LOG(" ... \"%s\"", path);
@@ -84,6 +87,28 @@ VkPipelineShaderStageCreateInfo GPUDevice::load_shader_stage(VkFlags stage, cons
 		.module = load_shader_from_file(device, filename.c_str()),
 		.pName = "main",
 	};
+}
+
+void transition_image(VkCommandBuffer cmd, VkImage image, VkImageLayout old_layout, VkImageLayout new_layout)
+{
+	VkImageMemoryBarrier barrier = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+		.srcAccessMask = 0,
+		.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+		.oldLayout = old_layout,
+		.newLayout = new_layout,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.image = image,
+		.subresourceRange = {
+			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+			.baseMipLevel = 0,
+			.levelCount = 1,
+			.baseArrayLayer = 0,
+			.layerCount = 1,
+		},
+	};
+	vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, 0, 0, 0, 1, &barrier);
 }
 
 struct filter_convert_op {
@@ -140,7 +165,7 @@ struct shape_convert_op {
 			shape.exterior_medium_id,
 			vertex_offset,
 			index_offset,
-			// (shape.normals.size() > 0) ? 1 : 0,
+			// (shape.normals.size() > 0) ? 1 : 0, // TODO
 		};
 		vertex_offset += shape.positions.size();
 		index_offset += shape.indices.size();
@@ -154,17 +179,15 @@ struct light_convert_op {
 	GPU::Light operator()(const DiffuseAreaLight& light) {
 		assert(light.shape_id >= 0);
 		const Shape& shape = scene.shapes[light.shape_id];
-		GPU::TableDist1D dist = {};
+		GPU::Light result = {};
 		if (std::holds_alternative<TriangleMesh>(shape)) {
 			const auto& mesh = std::get<TriangleMesh>(shape);
-			dist = gpu.add_dist_1d(mesh.triangle_sampler);
+			result.triangle_sampler = gpu.add_dist_1d(mesh.triangle_sampler);
 		}
-		return {
-			.intensity = light.intensity,
-			.shape_id = light.shape_id,
-			.surface_area = (float)surface_area(shape),
-			.triangle_sampler = dist,
-		};
+		result.intensity = light.intensity;
+		result.shape_id = light.shape_id;
+		result.surface_area = (float)surface_area(shape);
+		return result;
 	}
 	GPU::Light operator()(const Envmap& light) {
 		GPU::Light result = {};
@@ -223,7 +246,13 @@ GPUDevice::GPUDevice()
 GPUDevice::~GPUDevice()
 {
 	if (device) vkDeviceWaitIdle(device);
+	if (staging_image_buffer.memory) vkUnmapMemory(device, staging_image_buffer.memory);
 
+	ImGui_ImplVulkan_Shutdown();
+	ImGui_ImplRgfw_Shutdown();
+	ImGui::DestroyContext();
+
+	staging_image_buffer.Destroy(device);
 	instance_buffer.buffer.Destroy(device);
 	info_buffer.buffer.Destroy(device);
 	material_buffer.buffer.Destroy(device);
@@ -236,6 +265,7 @@ GPUDevice::~GPUDevice()
 	dist_buffer.buffer.Destroy(device);
 	texture_block.Destroy(device);
 	scene_block.Destroy(device);
+	tonemapper.Destroy(device);
 
 	sbt_buffer.Destroy(device);
 	tas.Destroy(*this);
@@ -251,10 +281,12 @@ GPUDevice::~GPUDevice()
 	if (command_pool) vkDestroyCommandPool(device, command_pool, 0);
 	for (int i = 0; i < image_count; ++i) {
 		vkDestroyImageView(device, image_views[i], 0);
+		vkDestroyFramebuffer(device, frame_buffers[i], 0);
 	}
+	if (render_pass) vkDestroyRenderPass(device, render_pass, 0);
 	if (swap_chain) vkDestroySwapchainKHR(device, swap_chain, 0);
+	if (surface) vkDestroySurfaceKHR(instance, surface, 0); 
 	if (device) vkDestroyDevice(device, 0);
-	if (surface) vkDestroySurfaceKHR(instance, surface, 0);
 	if (instance) vkDestroyInstance(instance, 0);
 }
 
@@ -520,7 +552,7 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 			.imageColorSpace = surfaceFormat.colorSpace,
 			.imageExtent = image_extent,
 			.imageArrayLayers = 1,
-			.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+			.imageUsage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
 			.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
 			.preTransform = capabilities.currentTransform,
 			.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
@@ -576,13 +608,13 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 		VkImageCreateInfo imgInfo{
 			.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
 			.imageType = VK_IMAGE_TYPE_2D,
-			.format = VK_FORMAT_R8G8B8A8_UNORM,
+			.format = VK_FORMAT_R32G32B32A32_SFLOAT,
 			.extent = extent3d(image_extent),
 			.mipLevels = 1,
 			.arrayLayers = 1,
 			.samples = VK_SAMPLE_COUNT_1_BIT,
 			.tiling = VK_IMAGE_TILING_OPTIMAL,
-			.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+			.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
 			.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
 		};
 		assert(vkCreateImage(device, &imgInfo, nullptr, &storage_image) == VK_SUCCESS);
@@ -597,7 +629,7 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 		vkBindImageMemory(device, storage_image, storage_memory, 0);
 
 		VkImageViewCreateInfo siv{}; siv.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-		siv.image = storage_image; siv.viewType = VK_IMAGE_VIEW_TYPE_2D; siv.format = VK_FORMAT_R8G8B8A8_UNORM;
+		siv.image = storage_image; siv.viewType = VK_IMAGE_VIEW_TYPE_2D; siv.format = VK_FORMAT_R32G32B32A32_SFLOAT;
 		siv.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; siv.subresourceRange.baseMipLevel = 0; siv.subresourceRange.levelCount = 1;
 		siv.subresourceRange.baseArrayLayer = 0; siv. subresourceRange.layerCount = 1;
 		vkCreateImageView(device, &siv, nullptr, &storage_view);
@@ -646,7 +678,7 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 		assert(vkCreatePipelineLayout(device, &plci, 0, &pipeline_layout) == VK_SUCCESS);
 	}
 
-	VkPipelineShaderStageCreateInfo stages[4];
+	VkPipelineShaderStageCreateInfo stages[4] = {};
 
 	LOG("Loading Shaders...");
 	{
@@ -706,7 +738,7 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 		assert(vkCreateRayTracingPipelinesKHR(device, 0, 0, 1, &pipeline_info, nullptr, &pipeline) == VK_SUCCESS);
 	}
 
-	for (auto stage: stages)
+	for (const auto& stage: stages)
 		if (stage.module) vkDestroyShaderModule(device, stage.module, 0);
 
 	LOG("Creating Constant Buffers...");
@@ -764,6 +796,8 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 			dist_buffer.CreateFromStaging(*this, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
 		}
 		{
+			scene_info.bounds.center = scene->bounds.center;
+			scene_info.bounds.radius = scene->bounds.radius;
 			scene_info.camera = convert(scene->camera);
 			info_buffer.Add(scene_info);
 			info_buffer.CreateFromStaging(*this, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
@@ -853,15 +887,16 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 		// Descriptor pool and set
 		VkDescriptorPoolSize pool_sizes[] = {
 			{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,     64 },
+			{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,              64 },
 			{ VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 16 },
 			{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,              16 },
 			{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,             16 },
 			{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,             16 },
-			{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,              64 },
 			{ VK_DESCRIPTOR_TYPE_SAMPLER,                     1 },
 		};
 		VkDescriptorPoolCreateInfo pool_info {
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+			.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
 			.maxSets = 16,
 			.poolSizeCount = (uint32_t)std::size(pool_sizes),
 			.pPoolSizes = pool_sizes,
@@ -896,7 +931,7 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 		attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 		attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 		attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-		attachment.initialLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+		attachment.initialLayout = VK_IMAGE_LAYOUT_GENERAL;
 		attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 		VkAttachmentReference color_attachment = {};
 		color_attachment.attachment = 0;
@@ -939,6 +974,13 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 			assert(vkCreateFramebuffer(device, &info, 0, &frame_buffers[i]) == VK_SUCCESS);
 		}
 	}
+	LOG("Creating Staging Image Buffer...");
+	{
+		VkDeviceSize size = image_extent.width * image_extent.height * 3 * sizeof(float);
+		VkFlags memory_flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+		createBuffer(size, VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT, memory_flags, staging_image_buffer.buffer, staging_image_buffer.memory);
+		vkMapMemory(device, staging_image_buffer.memory, 0, VK_WHOLE_SIZE, 0, (void**)&storage_mapped);
+	}
 	LOG("Setting up ImGui...");
 	{
 		// Setup Dear ImGui context
@@ -968,11 +1010,14 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 		};
 		ImGui_ImplVulkan_Init(&init_info);
 	}
+	LOG("Creating Tonemapper...");
+	{
+		tonemapper.Create(*this);
+	}
 }
 
 void GPUDevice::render(RGFW_window* window)
 {
-	// record command buffer: trace rays into storage image, then copy to swapchain image
 	VkCommandBufferAllocateInfo ca{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO }; ca.commandPool = command_pool; ca.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; ca.commandBufferCount = 1;
 	VkCommandBuffer cmd; vkAllocateCommandBuffers(device, &ca, &cmd);
 
@@ -988,8 +1033,12 @@ void GPUDevice::render(RGFW_window* window)
 		if (RGFW_isKeyPressed(RGFW_r))
 			frame_count = 0;
 
+		bool want_save = RGFW_isKeyPressed(RGFW_s);
+
 		uint32_t image_index;
 		vkAcquireNextImageKHR(device, swap_chain, UINT64_MAX, image_available_semaphore, 0, &image_index);
+
+		tonemapper.SetImages(device, storage_view, image_views[image_index]);
 
 		VkCommandBufferBeginInfo bi2{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO }; bi2.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 		vkBeginCommandBuffer(cmd, &bi2);
@@ -1010,14 +1059,27 @@ void GPUDevice::render(RGFW_window* window)
 		VkStridedDeviceAddressRegionKHR callable_sbt{};
 		vkCmdTraceRaysKHR(cmd, &rgen_sbt, &miss_sbt, &chit_sbt, &callable_sbt, width, height, 1);
 
+		// transition storage image to src
+		barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER; barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL; barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL; barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED; barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED; barrier.image = storage_image; barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; barrier.subresourceRange.baseMipLevel = 0; barrier.subresourceRange.levelCount = 1; barrier.subresourceRange.baseArrayLayer = 0; barrier.subresourceRange.layerCount = 1; barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT; barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+		vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+
 		// transition swapchain image to transfer dst
 		VkImage dst = images[image_index];
-		VkImageMemoryBarrier toCopy{}; toCopy.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER; toCopy.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; toCopy.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; toCopy.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED; toCopy.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED; toCopy.image = dst; toCopy.subresourceRange = barrier.subresourceRange; toCopy.srcAccessMask = 0; toCopy.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-		vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toCopy);
+		VkImageMemoryBarrier toCopy{}; toCopy.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER; toCopy.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; toCopy.newLayout = VK_IMAGE_LAYOUT_GENERAL; toCopy.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED; toCopy.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED; toCopy.image = dst; toCopy.subresourceRange = barrier.subresourceRange; toCopy.srcAccessMask = 0; toCopy.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+		vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toCopy);
 
-		// copy storage image -> swapchain image
-		VkImageCopy imcopy{}; imcopy.srcOffset = { 0,0,0 }; imcopy.dstOffset = { 0,0,0 }; imcopy.extent = { width, height, 1 }; imcopy.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; imcopy.srcSubresource.layerCount = 1; imcopy.dstSubresource = imcopy.srcSubresource;
-		vkCmdCopyImage(cmd, storage_image, VK_IMAGE_LAYOUT_GENERAL, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imcopy);
+#if 0
+		if (want_save)
+		{
+			VkBufferImageCopy region = {
+				.imageSubresource = default_image_subresource(),
+				.imageExtent = extent3d(image_extent),
+			};
+			vkCmdCopyImageToBuffer(cmd, storage_image, VK_IMAGE_LAYOUT_GENERAL, staging_image_buffer, 1, &region);
+		}
+#endif
+
+		tonemapper.Tonemap(cmd, width, height);
 
 		ImGui_ImplVulkan_NewFrame();
 		ImGui_ImplRgfw_NewFrame();
@@ -1050,8 +1112,18 @@ void GPUDevice::render(RGFW_window* window)
 		vkQueuePresentKHR(present_queue, &pi);
 		vkQueueWaitIdle(present_queue);
 
+		if (want_save)
+		{
+			int width = (int)(image_extent.width);
+			int height = (int)(image_extent.height);
+			imwrite_raw("save.exr", storage_mapped, width, height);
+			LOG("Saved to \"%s\"", "save.exr");
+		}
+
 		frame_count += 1;
 	}
+
+	vkFreeCommandBuffers(device, command_pool, 1, &cmd);
 }
 
 void VulkanRawBuffer::Create(GPUDevice& gpu, VkFlags usage)
@@ -1070,7 +1142,7 @@ void VulkanRawBuffer::CreateFromStaging(GPUDevice& gpu, VkFlags usage)
 	usage |= VK_BUFFER_USAGE_TRANSFER_DST_BIT; // required
 	gpu.createBuffer(data.size(), usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, buffer.buffer, buffer.memory);
 
-	VulkanBuffer staging;
+	VulkanBuffer staging{};
 	gpu.createBuffer(data.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, staging.buffer, staging.memory);
 	void* p;
 	vkMapMemory(gpu.device, staging.memory, 0, data.size(), 0, &p);
@@ -1100,6 +1172,51 @@ void VulkanBuffer::Destroy(VkDevice device)
 {
 	if (buffer) vkDestroyBuffer(device, buffer, 0);
 	if (memory) vkFreeMemory(device, memory, 0);
+}
+
+void Tonemapper::Create(GPUDevice& gpu)
+{
+	block.add_binding("in", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE);
+	block.add_binding("out", VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
+	block.shader_stages = VK_SHADER_STAGE_COMPUTE_BIT;
+	block.CreateLayout(gpu.device);
+	block.Allocate(gpu.device, gpu.descriptor_pool);
+
+	VkPushConstantRange push_range = {
+		.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+		.size = sizeof(float),
+	};
+	VkPipelineLayoutCreateInfo pipeline_layout_info = {
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+		.setLayoutCount = 1,
+		.pSetLayouts = &block.descriptor_set_layout,
+		.pushConstantRangeCount = 1,
+		.pPushConstantRanges = &push_range,
+	};
+	assert(vkCreatePipelineLayout(gpu.device, &pipeline_layout_info, 0, &pipeline_layout) == VK_SUCCESS);
+
+	VkComputePipelineCreateInfo pipeline_info = {
+		.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+		.stage = gpu.load_shader_stage(VK_SHADER_STAGE_COMPUTE_BIT, "tonemap"),
+		.layout = pipeline_layout,
+	};
+	assert(vkCreateComputePipelines(gpu.device, 0, 1, &pipeline_info, 0, &pipeline) == VK_SUCCESS);
+	vkDestroyShaderModule(gpu.device, pipeline_info.stage.module, 0);
+}
+
+void Tonemapper::Destroy(VkDevice device)
+{
+	block.Destroy(device);
+	if (pipeline) vkDestroyPipeline(device, pipeline, 0);
+	if (pipeline_layout) vkDestroyPipelineLayout(device, pipeline_layout, 0);
+}
+
+void Tonemapper::Tonemap(VkCommandBuffer cmd, uint32_t width, uint32_t height)
+{
+	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, 1, &block.descriptor_set, 0, 0);
+	vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(float), &exposure);
+	vkCmdDispatch(cmd, align(width, 8u), align(height, 8u), 1);
 }
 
 // ImGui does not recommend putting itself in a DLL,

@@ -120,7 +120,8 @@ struct ShaderParameterBlock {
 		};
 		assert(descriptor_map.contains(name));
 		uint32_t binding = descriptor_map[name];
-		assert(descriptors[binding].type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
+		assert(descriptors[binding].type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE
+			|| descriptors[binding].type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
 		return {
 			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 			.dstSet = descriptor_set,
@@ -201,6 +202,27 @@ struct ShaderParameterBlock {
 	}
 };
 
+struct Tonemapper {
+	VkPipelineLayout      pipeline_layout{ 0 };
+	VkPipeline            pipeline{ 0 };
+	ShaderParameterBlock  block{};
+	float                 exposure{ 1.0f };
+
+	void Create(struct GPUDevice& device);
+	void Destroy(VkDevice device);
+
+	void SetImages(VkDevice device, VkImageView input, VkImageView output) {
+		VkWriteDescriptorSet writes[] = {
+			block.write("in", input, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
+			block.write("out", output),
+		};
+		vkUpdateDescriptorSets(device, (uint32_t)std::size(writes), writes, 0, 0);
+		block.clear_write_memory();
+	}
+
+	void Tonemap(VkCommandBuffer cmd, uint32_t width, uint32_t height);
+};
+
 #define MAX_SWAP_CHAIN_IMAGES 4 /* For mobile devices, this would need to be higher.. */
 struct GPUDevice {
 	PFN_vkCreateRayTracingPipelinesKHR              vkCreateRayTracingPipelinesKHR             { nullptr };
@@ -231,9 +253,12 @@ struct GPUDevice {
 	VkSemaphore                     render_finished_semaphore{ 0 };
 	VkSemaphore                     image_available_semaphore{ 0 };
 	VkFence                         fence{ 0 };
+	Tonemapper                      tonemapper{};
 	VkDeviceMemory                  storage_memory{ 0 };
 	VkImage                         storage_image{ 0 };
 	VkImageView                     storage_view{ 0 };
+	VulkanBuffer                    staging_image_buffer{};
+	float*                          storage_mapped{ 0 };
 	VkDescriptorPool                descriptor_pool{ 0 };
 	VkPipelineLayout                pipeline_layout{ 0 };
 	VkPipeline                      pipeline{ 0 };

@@ -26,7 +26,6 @@ struct BSphere
 
 struct Options
 {
-    BSphere bounds;
     int max_depth;
     int rr_depth;
     int max_null_collisions;
@@ -110,10 +109,11 @@ struct EnvironmentMap
 
 struct Light
 {
-    float3 intensity;
-    int shape_id; // -1 if Envmap!
-    float surface_area;
     TableDist1D triangle_sampler; // Only for triangle meshes!
+    float3 intensity;
+    float surface_area;
+    int3 _padding;
+    int shape_id; // -1 if Envmap!
 };
 
 struct SceneInfo
@@ -121,6 +121,7 @@ struct SceneInfo
 	Options options;
     Camera camera;
     TableDist1D light_dist;
+    BSphere bounds;
 //  EnvironmentMap envmap;
 };
 

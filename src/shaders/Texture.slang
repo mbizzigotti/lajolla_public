@@ -6,6 +6,8 @@ Texture2D textures[];
 
 float3 eval(int texture_id, float2 uv, float footprint)
 {
+    return 0;
+	#if 0
     int width;
     int height;
     textures[texture_id].GetDimensions(width, height);
@@ -16,4 +18,5 @@ float3 eval(int texture_id, float2 uv, float footprint)
     float scaled_footprint = float(max(width, height)) * max(t.uscale, t.vscale) * footprint;
     float level = log2(max(scaled_footprint, 1e-8));
    	return textures[texture_id].SampleLevel(sampler, local_uv, level).rgb;
+	#endif
 }

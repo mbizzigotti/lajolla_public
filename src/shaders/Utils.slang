@@ -1,19 +1,28 @@
 
 [ForceInline]
+float distance_squared(float3 a, float3 b)
+{
+    float3 diff = b - a;
+    return dot(diff, diff);
+}
+
+[ForceInline]
 float luminance(float3 s)
 {
     return dot(s, float3(0.212671, 0.715160, 0.072169));
 }
 
 [ForceInline]
-float3 xform_point(float4x4 xform, float3 pt) {
+float3 xform_point(float4x4 xform, float3 pt)
+{
     float4 tpt = mul(transpose(xform), float4(pt, 1));
     float inv_w = 1 / tpt[3];
     return float3(tpt[0] * inv_w, tpt[1] * inv_w, tpt[2] * inv_w);
 }
 
 [ForceInline]
-float3 xform_vector(float4x4 xform, float3 vec) {
+float3 xform_vector(float4x4 xform, float3 vec)
+{
     return mul(transpose(xform), float4(vec, 0)).xyz;
 }
 
@@ -44,4 +53,26 @@ float3 sample_half_vector(float alpha, float2 rnd_param)
         sin_h_elevation * sin_h_azimuth,
         cos_h_elevation
     );
+}
+
+int upper_bound(StructuredBuffer<float> arr, int offset, int count, float value)
+{
+    int first = offset;
+    int last = offset + count;
+
+    while (first < last)
+    {
+        int mid = (first + last) >> 1;
+
+        if (value < arr[mid])
+        {
+            last = mid;
+        }
+        else
+        {
+            first = mid + 1;
+        }
+    }
+
+    return first - offset;
 }
