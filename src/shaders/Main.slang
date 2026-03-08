@@ -75,19 +75,20 @@ void rgen_path_tracing()
 
     if (!vertex_.hasValue) {
         scene.accumulate_sample(pixel_index, float4(0, 0, 0, 1));
+        return;
 	}
 
     PathVertex vertex = vertex_.value;
 	
 	if (vertex.area_light_id != -1) {
 		radiance += emission(vertex, -ray.Direction);
-	}
+    }
 
-    float3 current_path_throughput = float3(1);
-	
-	int depth = 1;
-	while (depth < 4)
-    {
+    float eta_scale = 1;
+    float3 current_path_throughput = 1;
+
+    int max_depth = scene.options.max_depth;
+    for (int num_vertices = 3; max_depth == -1 || num_vertices <= max_depth + 1; num_vertices++) {
 		float light_rnd = rng.next_float();
         int light_id = sample_light(light_rnd);
 		float3 light_sample_rnd = rng.next_float3();
@@ -162,10 +163,25 @@ void rgen_path_tracing()
             radiance += current_path_throughput * C2 * w2;
         }
 
+        if (!bsdf_vertex.hasValue) {
+            // Hit nothing -- can't continue tracing.
+            break;
+        }
+
+        // Update rays/intersection/current_path_throughput/current_pdf
+        // Russian roulette heuristics
+        float rr_prob = 1;
+        if (num_vertices - 1 >= scene.options.rr_depth) {
+            rr_prob = min(max_comp((1 / eta_scale) * current_path_throughput), 0.95);
+            if (rng.next_float() > rr_prob) {
+                // Terminate the path
+                break;
+            }
+        }
+
         ray = bsdf_ray;
         vertex = bsdf_vertex.value;
         current_path_throughput = current_path_throughput * (G * f) / p2;
-        depth += 1;
 	}
     scene.accumulate_sample(pixel_index, float4(radiance, 1));
 }

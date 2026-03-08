@@ -13,6 +13,12 @@ float luminance(float3 s)
 }
 
 [ForceInline]
+func max_comp(float3 v) -> float
+{
+    return max(v.x, max(v.y, v.z));
+}
+
+[ForceInline]
 float3 xform_point(float4x4 xform, float3 pt)
 {
     float4 tpt = mul(transpose(xform), float4(pt, 1));

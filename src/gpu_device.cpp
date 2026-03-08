@@ -815,9 +815,13 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 			dist_buffer.CreateFromStaging(*this, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
 		}
 		{
+			scene_info.camera = convert(scene->camera);
 			scene_info.bounds.center = scene->bounds.center;
 			scene_info.bounds.radius = scene->bounds.radius;
-			scene_info.camera = convert(scene->camera);
+			scene_info.options.max_depth = scene->options.max_depth;
+			scene_info.options.rr_depth = scene->options.rr_depth;
+			scene_info.options.max_null_collisions = scene->options.max_null_collisions;
+			scene_info.options.envmap_light_id = scene->envmap_light_id;
 			info_buffer.Add(scene_info);
 			info_buffer.CreateFromStaging(*this, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
 		}
