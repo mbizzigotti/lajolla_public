@@ -32,9 +32,10 @@ struct Scene
         }
 	}
 	
-    property EnvironmentMap envmap  { get { return info.envmap; } }
-    property Camera         camera  { get { return info.camera; } }
-    property Options        options { get { return info.options; } }
+    property EnvironmentMap envmap     { get { return {}; } }
+    property Camera         camera     { get { return info.camera; } }
+    property Options        options    { get { return info.options; } }
+    property TableDist1D    light_dist { get { return info.light_dist; } }
 };
 
 ParameterBlock<Scene> scene;

@@ -67,7 +67,40 @@ Scene::Scene(GPUDevice *gpu_device,
         envmap_light_id(envmap_light_id),
         texture_pool(texture_pool), options(options),
         output_filename(output_filename) {
-	std::cout << "TODO: Create scene GPU\n";
+    // We use Embree here to calculate the bounding box, because I am too tired to write it myself.....
+    RTCDevice embree_device = rtcNewDevice(nullptr);
+    RTCScene embree_scene = rtcNewScene(embree_device);
+    rtcSetSceneBuildQuality(embree_scene, RTC_BUILD_QUALITY_LOW);
+    rtcSetSceneFlags(embree_scene, RTC_SCENE_FLAG_ROBUST);
+    for (const Shape& shape : this->shapes)
+        register_embree(shape, embree_device, embree_scene);
+    rtcCommitScene(embree_scene);
+    RTCBounds embree_bounds;
+    rtcGetSceneBounds(embree_scene, &embree_bounds);
+    Vector3 lb{ embree_bounds.lower_x, embree_bounds.lower_y, embree_bounds.lower_z };
+    Vector3 ub{ embree_bounds.upper_x, embree_bounds.upper_y, embree_bounds.upper_z };
+    bounds = BSphere{ distance(ub, lb) / 2, (lb + ub) / Real(2) };
+    rtcReleaseScene(embree_scene);
+    rtcReleaseDevice(embree_device);
+
+    // Same code from above...
+    // build shape & light sampling distributions if necessary
+    // TODO: const_cast is a bit ugly...
+    std::vector<Shape>& mod_shapes = const_cast<std::vector<Shape>&>(this->shapes);
+    for (Shape& shape : mod_shapes) {
+        init_sampling_dist(shape);
+    }
+    std::vector<Light>& mod_lights = const_cast<std::vector<Light>&>(this->lights);
+    for (Light& light : mod_lights) {
+        init_sampling_dist(light, *this);
+    }
+
+    // build a sampling distributino for all the lights
+    std::vector<Real> power(this->lights.size());
+    for (int i = 0; i < (int)this->lights.size(); i++) {
+        power[i] = light_power(this->lights[i], *this);
+    }
+    light_dist = make_table_dist_1d(power);
 }
 
 Scene::~Scene() {

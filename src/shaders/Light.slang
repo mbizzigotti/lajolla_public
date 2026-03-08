@@ -10,17 +10,14 @@ struct PointAndNormal
     float3 normal;
 };
 
-/// Computes the total power the light emit to all positions and directions.
-/// Useful for sampling.
-[ForceInline]
-float light_power(in Light light)
-{
-    return luminance(light.intensity) * light.surface_area * float.getPi();
-}
-
 [ForceInline]
 bool is_envmap(Light light) {
     return light.shape_id < 0;
+}
+
+int sample_light(float u)
+{
+    return sample(scene.light_dist, u);
 }
 
 PointAndNormal sample_point_on_envmap(float3 rnd_param)
@@ -156,7 +153,7 @@ float pdf_point_on_light(in Light light, PointAndNormal point_on_light, float3 r
 float3 emission(in Light light, float3 view_dir, float view_footprint, PointAndNormal point_on_light)
 {
     if (is_envmap(light)) {
-
+        return emission_envmap(view_dir, point_on_light, view_footprint);
 	}
     return dot(point_on_light.normal, view_dir) <= 0 ? 0 : light.intensity;
 }

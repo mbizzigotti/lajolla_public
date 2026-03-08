@@ -29,6 +29,15 @@ struct pcg32_state
         float y = next_float();
         return float2(x, y);
     }
+
+    [mutating]
+    float3 next_float3()
+    {
+        float x = next_float();
+        float y = next_float();
+        float z = next_float();
+        return float3(x, y, z);
+    }
 };
 
 pcg32_state init_pcg32(uint64_t stream_id = 1, uint64_t seed = 0x31e241f862a1fb5eULL)

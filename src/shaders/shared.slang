@@ -2,6 +2,9 @@
 #ifdef __cplusplus
 using uint = unsigned int;
 using int2 = TVector2<int>;
+using int3 = TVector3<int>;
+using int4 = TVector4<int>;
+using uint4 = TVector4<uint32_t>;
 using float2 = TVector2<float>;
 using float3 = TVector3<float>;
 using float4x4 = TMatrix4x4<float>;
@@ -41,6 +44,7 @@ struct Filter
 {
     uint type;
     float value;
+    int2 _padding;
 };
 
 struct Camera
@@ -48,9 +52,9 @@ struct Camera
     float4x4 sample_to_cam, cam_to_sample;
     float4x4 cam_to_world, world_to_cam;
     int width, height;
-    int2 _padding;
-    Filter filter;
     int medium_id; // for participating media rendering in homework 2
+    int _padding;
+    Filter filter;
 };
 
 static const int SHAPE_HAS_UVS      = 0x01;
@@ -72,25 +76,18 @@ struct Shape
     float radius;
 };
 
-struct FloatArray
-{
-    uint offset;
-    uint count;
-};
-
 struct TableDist1D
 {
-    FloatArray pmf, cdf;
+    uint4 _pmf_cdf;
 };
 
 struct TableDist2D
 {
-    FloatArray cdf_rows, pdf_rows;
-    // cdf_maringlas & pdf_marginals store a single 1D piecewise
-    // constant distribution for sampling a row
-    FloatArray cdf_marginals, pdf_marginals;
+    uint4 _pdf_cdf_rows;
+    uint4 _pdf_cdf_marginals;
     float total_values;
     int width, height;
+    int _padding;
 };
 
 struct TextureInfo
@@ -108,6 +105,7 @@ struct EnvironmentMap
     TableDist2D sampling_dist;
     float scale;
     int texture;
+    int _padding0, _padding1;
 };
 
 struct Light
@@ -120,9 +118,10 @@ struct Light
 
 struct SceneInfo
 {
-    Options options;
+	Options options;
     Camera camera;
-    EnvironmentMap envmap;
+    TableDist1D light_dist;
+//  EnvironmentMap envmap;
 };
 
 interface Material {};

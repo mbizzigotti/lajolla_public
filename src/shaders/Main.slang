@@ -1,7 +1,9 @@
+import shared;
 import Scene;
 import Camera;
 import random;
 import Intersection;
+import Light;
 
 import Utils;
 import Frame;
@@ -20,16 +22,27 @@ void rgen_path_tracing()
 	float4 result = float4(0);
 	if (let vertex = intersect(ray))
     {
-        float3 dir = to_world(vertex.shading_frame, sample_cos_hemisphere(rng.next_float2()));
+		float light_rnd = rng.next_float();
+        int light_id = sample_light(light_rnd);
+		float3 light_sample_rnd = rng.next_float3();
+        Light light = scene.lights[light_id];
+        PointAndNormal point_on_light = sample_point_on_light(light, vertex.position, light_sample_rnd);
+
+        float3 dir_light = normalize(point_on_light.position - vertex.position);
+		#if 1
         RayDesc shadow_ray;
         shadow_ray.Origin = vertex.position;
-        shadow_ray.Direction = dir;//float3(0, 1, 0);
+        shadow_ray.Direction = dir_light;
         shadow_ray.TMin = 0.01;
-        shadow_ray.TMax = 10.0;
+        shadow_ray.TMax = (1 - 0.01) * distance(point_on_light.position, vertex.position);
         if (!occluded(shadow_ray))
         {
-			result = float4(normalize(vertex.position), 1);
-		}
+            let material = scene.materials[vertex.material_id];
+			result = float4(material.reflectance, 1);
+        }
+		#else
+        result = float4(dir_light, 1);
+		#endif
 	}
     scene.accumulate_sample(pixel_index, result);
 }

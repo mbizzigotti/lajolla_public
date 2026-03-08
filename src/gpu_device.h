@@ -54,6 +54,17 @@ struct VulkanRawBuffer {
 		for (uint32_t i = 0; i < size; ++i)
 			data.emplace_back(bytes[i]);
 	}
+
+	template <typename To, typename From>
+	void AddArrayAndConvert(const std::vector<From>& array) {
+		size_t offset = data.size();
+		data.resize(offset + array.size() * sizeof(To));
+		for (const From& item : array) {
+			To converted = (To)(item);
+			memcpy(data.data() + offset, &converted, sizeof(To));
+			offset += sizeof(To);
+		}
+	}
 };
 
 struct ShaderParameterBlock {
@@ -239,7 +250,8 @@ struct GPUDevice {
 	VulkanRawBuffer                 index_buffer{};
 	VulkanRawBuffer                 uv_buffer{};
 	VulkanRawBuffer                 normal_buffer{};
-
+	VulkanRawBuffer                 light_buffer{};
+	VulkanRawBuffer                 dist_buffer{};
 	ShaderParameterBlock            texture_block{};
 	ShaderParameterBlock            scene_block{};
 	
@@ -256,6 +268,7 @@ struct GPUDevice {
 
 	void add_shape_data(const Shape &shape);
 	void add_shape(uint32_t index, const GPU::Shape& gpu_shape, const Shape &shape);
+	GPU::TableDist1D add_dist_1d(const TableDist1D& table);
 	VkPipelineShaderStageCreateInfo load_shader_stage(VkFlags stage, const char* name);
 
 	uint32_t find_memory_type(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
