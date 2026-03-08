@@ -834,19 +834,15 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 		};
 		const VkAccelerationStructureBuildRangeInfoKHR* pRanges = &build_range;
 
-		// scratch buffer
-		VkBuffer scratch; VkDeviceMemory scratchMem; createBuffer(tSizes.buildScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, scratch, scratchMem);
-		VkBufferDeviceAddressInfo saddr{ VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO }; saddr.buffer = scratch; VkDeviceAddress scratchAddr = vkGetBufferDeviceAddress(device, &saddr);
-
 		// scratch for TLAS
-		VkBuffer tscratch; VkDeviceMemory tscratchMem; createBuffer(tSizes.buildScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, tscratch, tscratchMem);
-		saddr.buffer = tscratch; scratchAddr = vkGetBufferDeviceAddress(device, &saddr);
+		VkBuffer tscratch; VkDeviceMemory tscratchMem;
+		createBuffer(tSizes.buildScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, tscratch, tscratchMem);
 
 		// build TLAS command
 		{
 			VkCommandBuffer cmd = temp_command_buffer();
 			tBuildInfo.dstAccelerationStructure = tas.handle;
-			tBuildInfo.scratchData.deviceAddress = scratchAddr;
+			tBuildInfo.scratchData.deviceAddress = get_buffer_device_address(device, tscratch);
 			vkCmdBuildAccelerationStructuresKHR(cmd, 1, &tBuildInfo, &pRanges);
 			flush_and_destroy_command_buffer(cmd);
 		}
