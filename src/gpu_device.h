@@ -279,6 +279,7 @@ struct GPUDevice {
 	VulkanRawBuffer                 dist_buffer{};
 	ShaderParameterBlock            texture_block{};
 	ShaderParameterBlock            scene_block{};
+	uint32_t                        target_sample_count{ 16 * 1024 };
 	
 	std::vector<VulkanAccelerationStructure> bass;
 

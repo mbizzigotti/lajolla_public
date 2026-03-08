@@ -175,7 +175,7 @@ void imwrite(const fs::path &filename, const Image3 &image) {
 void imwrite_raw(const fs::path& filename, const float* data, int width, int height)
 {
     const char* err = nullptr;
-    int ret = SaveEXR(data, width, height, 3, 1 /* write as fp16 */, filename.generic_string().c_str(), &err);
+    int ret = SaveEXR(data, width, height, 4, 1 /* write as fp16 */, filename.generic_string().c_str(), &err);
     if (ret != TINYEXR_SUCCESS) {
         std::cerr << "OpenEXR error: " << err << std::endl;
         FreeEXRErrorMessage(err);

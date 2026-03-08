@@ -74,7 +74,7 @@ void rgen_path_tracing()
     let vertex_ = intersect(ray);
 
     if (!vertex_.hasValue) {
-        scene.accumulate_sample(pixel_index, float4(0));
+        scene.accumulate_sample(pixel_index, float4(0, 0, 0, 1));
 	}
 
     PathVertex vertex = vertex_.value;
@@ -83,7 +83,7 @@ void rgen_path_tracing()
 		radiance += emission(vertex, -ray.Direction);
 	}
 
-    float3 current_path_throughput = 1;
+    float3 current_path_throughput = float3(1);
 	
 	int depth = 1;
 	while (depth < 4)
@@ -94,6 +94,8 @@ void rgen_path_tracing()
         Light light = scene.lights[light_id];
         PointAndNormal point_on_light = sample_point_on_light(light, vertex.position, light_sample_rnd);
 
+        float w1 = 0;
+        float3 C1 = 0;
         let material = scene.materials[vertex.material_id];
         float3 dir_view = -ray.Direction;
         float3 dir_light = normalize(point_on_light.position - vertex.position);
@@ -110,10 +112,15 @@ void rgen_path_tracing()
                       pdf_point_on_light(light, point_on_light, vertex.position);
 			float3 f = eval(material, vertex, dir_view, dir_light);
 			float3 L = emission(light, -dir_light, 0, point_on_light);
-            float3 C1 = G * f * L;
+            C1 = G * f * L;
+
+            float p2 = pdf_sample_bsdf(material, vertex, dir_view, dir_light);
+            p2 *= G;
+
+            w1 = (p1 * p1) / (p1 * p1 + p2 * p2);
             C1 /= p1;
-			radiance += C1;
         }
+        radiance += current_path_throughput * C1 * w1;
 
         Optional<float3> bsdf_sample = sample(material, vertex, dir_view, rng.next_float2());
         float3 dir_bsdf = bsdf_sample.value;
@@ -131,6 +138,12 @@ void rgen_path_tracing()
 
         float3 f = eval(material, vertex, dir_view, dir_bsdf);
         float p2 = pdf_sample_bsdf(material, vertex, dir_view, dir_bsdf);
+        if (p2 <= 0) {
+            // Numerical issue -- we generated some invalid rays.
+            break;
+        }
+
+        p2 *= G;
 
         if (bsdf_vertex.hasValue && bsdf_vertex.value.area_light_id != -1) {
             // G & f are already computed.

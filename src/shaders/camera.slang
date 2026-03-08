@@ -40,7 +40,7 @@ extension Camera
         float dy = rng.next_float();
         // dx/dy are uniform variables in [0, 1],
         // so let's remap them using importance sampling.
-        float2 offset = 0.5 * filter.sample(float2(dx, dy));
+        float2 offset = filter.sample(float2(dx, dy));
         // Filters are placed at pixel centers.
         float2 remapped_pos = (float2(pixel_pos) + 0.5 + offset) / float2(dim);
         float3 pt = xform_point(sample_to_cam, float3(remapped_pos.xy, 0));
