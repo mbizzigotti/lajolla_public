@@ -1,6 +1,5 @@
 
-basic.slang.inl: basic.spv
-	xxd -i basic.spv > basic.slang.inl
+build: rgen_path_tracing.spv miss.spv chit_tri.spv ahit.spv
 
-basic.spv: basic.slang
-	slangc basic.slang -target spirv -o basic.spv
+%.spv: Main.slang
+	slangc Main.slang -target spirv -entry $* -o $@

@@ -1,5 +1,6 @@
 import shared;
 import random;
+import Utils;
 
 extension Filter
 {
@@ -28,16 +29,6 @@ extension Filter
 		}
 	}
 };
-
-float3 xform_point(float4x4 xform, float3 pt) {
-    float4 tpt = mul(transpose(xform), float4(pt, 1));
-    float inv_w = 1 / tpt[3];
-    return float3(tpt[0] * inv_w, tpt[1] * inv_w, tpt[2] * inv_w);
-}
-
-float3 xform_vector(float4x4 xform, float3 vec) {
-    return mul(transpose(xform), float4(vec, 0)).xyz;
-}
 
 extension Camera
 {

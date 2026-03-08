@@ -20,17 +20,30 @@ find_package(Vulkan REQUIRED)
 find_program(SLANGC_EXECUTABLE slangc REQUIRED)
 
 set(SHADER_SOURCE_DIR ${CMAKE_SOURCE_DIR}/src/shaders)
-set(SHADER_SOURCE ${SHADER_SOURCE_DIR}/basic.slang)
 set(SHADER_OUTPUT ${CMAKE_BINARY_DIR}/basic.spv)
+file(GLOB SHADER_SOURCE "${SHADER_SOURCE_DIR}/*.slang")
 
-add_custom_command(
-    OUTPUT ${SHADER_OUTPUT}
-    COMMAND ${SLANGC_EXECUTABLE} ${SHADER_SOURCE} -target spirv -profile sm_6_6 -emit-spirv-directly -fvk-use-scalar-layout -fvk-use-entrypoint-name -o ${SHADER_OUTPUT}
-    DEPENDS ${SHADER_SOURCE} ${SHADER_SOURCE_DIR}/camera.slang ${SHADER_SOURCE_DIR}/shared.slang
-    COMMENT "Shader: ${SHADER_SOURCE} -> ${SHADER_OUTPUT}"
-)
+macro(addShaderCompile arg1 arg2)
+	add_custom_command(
+		OUTPUT ${arg1}.spv
+		COMMAND ${SLANGC_EXECUTABLE} ${SHADER_SOURCE_DIR}/${arg2} -target spirv -entry ${arg1} -o ${CMAKE_BINARY_DIR}/${arg1}.spv
+		DEPENDS ${SHADER_SOURCE}
+		COMMENT ${arg1}.spv
+	)
+endmacro()
 
-add_custom_target(CompileShaders ALL DEPENDS ${SHADER_OUTPUT})
+addShaderCompile(rgen_path_tracing Main.slang)
+addShaderCompile(miss Intersection.slang)
+addShaderCompile(miss_shadow Intersection.slang)
+addShaderCompile(chit_tri Intersection.slang)
+addShaderCompile(ahit Intersection.slang)
+
+add_custom_target(CompileShaders ALL DEPENDS
+			${CMAKE_BINARY_DIR}/rgen_path_tracing.spv
+			${CMAKE_BINARY_DIR}/miss.spv
+			${CMAKE_BINARY_DIR}/miss_shadow.spv
+			${CMAKE_BINARY_DIR}/chit_tri.spv
+			${CMAKE_BINARY_DIR}/ahit.spv)
 
 include_directories(${EMBREE_INCLUDE_PATH})
 link_libraries(${EMBREE_LIBRARY} Vulkan::Vulkan)
