@@ -238,6 +238,7 @@ struct GPUDevice {
 	VkSampler                       sampler{ 0 };
 	ShaderParameterBlock            scene_block{};
 	uint32_t                        target_sample_count{ 16 * 1024 };
+	std::string                     scene_name;
 	
 	std::vector<VulkanImage>                 textures;
 	std::vector<VulkanAccelerationStructure> bass;
@@ -248,7 +249,7 @@ struct GPUDevice {
 	GPUDevice();
 	~GPUDevice();
 
-	void attach(RGFW_window* window, Scene *scene);
+	void attach(RGFW_window* window, Scene *scene, const std::string &path);
 	void render(RGFW_window *window);
 
 	void add_texture(const Mipmap3& texture);

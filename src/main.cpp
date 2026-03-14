@@ -48,7 +48,7 @@ int main(int argc, char *argv[]) {
             u8* pixels = stbi_load("icon.png", &w, &h, &comp, 4);
             if (pixels) RGFW_window_setIcon(window, pixels, w, h, RGFW_formatRGBA8);
         }
-		gpu_device.attach(window, scene.get());
+		gpu_device.attach(window, scene.get(), filenames[0]);
 		gpu_device.render(window);
 		return 0;
 	}

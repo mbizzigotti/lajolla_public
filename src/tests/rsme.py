@@ -1,0 +1,63 @@
+import os
+os.environ["OPENCV_IO_ENABLE_OPENEXR"] = "1"
+
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+from sys import argv
+
+# ---------- Load EXR images ----------
+ref = cv2.imread(argv[1], cv2.IMREAD_UNCHANGED).astype(np.float32)
+test = cv2.imread(argv[2], cv2.IMREAD_UNCHANGED).astype(np.float32)
+
+ref = cv2.cvtColor(ref, cv2.COLOR_BGR2RGB)
+test = cv2.cvtColor(test, cv2.COLOR_BGR2RGB)
+
+assert ref.shape == test.shape, "Images must have same resolution"
+
+# ---------- ACES Tonemap ----------
+def tonemap_aces(img):
+    a = 2.51
+    b = 0.03
+    c = 2.43
+    d = 0.59
+    e = 0.14
+    return np.clip((img*(a*img+b))/(img*(c*img+d)+e), 0, 1)
+
+# ---------- Display transform ----------
+def display_transform(img, exposure):
+    img = img * (2 ** exposure)          # exposure
+    img = tonemap_aces(img)              # tonemap
+    img = np.power(img, 1/2.2)           # gamma correction
+    return np.clip(img, 0, 1)
+
+# Automatically choose exposure from reference
+exposure = -np.log2(np.mean(ref) + 1e-6) - 2
+
+ref_disp = display_transform(ref, exposure)
+test_disp = display_transform(test, exposure)
+
+# ---------- RMSE ----------
+rmse = np.sqrt(np.mean((ref - test) ** 2))
+
+# ---------- Error map ----------
+error = np.linalg.norm(ref - test, axis=2)
+log_error = np.log1p(error)
+
+# ---------- Plot ----------
+fig, ax = plt.subplots(1,3, figsize=(15,5), constrained_layout=True)
+
+ax[0].imshow(ref_disp)
+ax[0].set_title("Reference (lajolla 64-bit FP)")
+ax[0].axis("off")
+
+ax[1].imshow(test_disp)
+ax[1].set_title("GPU Renderer (Vulkan 32-bit FP)")
+ax[1].axis("off")
+
+im = ax[2].imshow(log_error, cmap="inferno")
+ax[2].set_title(f"Error Map (RMSE = {rmse:.6f})")
+ax[2].axis("off")
+
+plt.colorbar(im, ax=ax[2], fraction=0.046)
+plt.show()

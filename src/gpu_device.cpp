@@ -25,6 +25,11 @@ constexpr T align(T current, T alignment) {
 	return (current + alignment - 1) & ~(alignment - 1);
 }
 
+template <typename T>
+constexpr T ceil_div(T num, T den) {
+	return (num + den - 1) / den;
+}
+
 struct QueueFamilyIndices {
 	std::optional<uint32_t> graphicsFamily;
 	std::optional<uint32_t> presentFamily;
@@ -632,11 +637,13 @@ GPU::TableDist2D GPUDevice::add_dist_2d(const TableDist2D& table)
 	return result;
 }
 
-void GPUDevice::attach(RGFW_window* window, Scene* scene)
+void GPUDevice::attach(RGFW_window* window, Scene* scene, const std::string &path)
 {
 	QueueFamilyIndices indices;
 	VkPipelineShaderStageCreateInfo stages[4] = {};
-	
+
+	scene_name = fs::path(path).stem().generic_string();
+
 	LOG("Creating Window Surface...");
 	{
 		assert(RGFW_window_createSurface_Vulkan(window, instance, &surface) == VK_SUCCESS);
@@ -1359,6 +1366,7 @@ void GPUDevice::render(RGFW_window* window)
 				if (show_controls)
 				{
 					ImGui::SliderFloat("Exposure", &tonemapper.exposure, 0.01f, 10.0f, "%.3f", ImGuiSliderFlags_Logarithmic);
+					ImGui::Text("%.3f M Rays Generated/second", (ImGui::GetIO().Framerate * float(width * height))/1e6f);
 				}
 			}
 			ImGui::End();
@@ -1387,10 +1395,11 @@ void GPUDevice::render(RGFW_window* window)
 
 		if (want_save)
 		{
+			Real render_time = tick(timer);
 			int width = (int)(image_extent.width);
 			int height = (int)(image_extent.height);
 			char filename[256] = {};
-			snprintf(filename, 256, "image_%uspp.exr", frame_count + 1);
+			snprintf(filename, 256, "gpu_%s_%uspp.exr", scene_name, frame_count + 1);
 			Image3 image(width, height);
 			struct Pixel {
 				Vector3f rgb;
@@ -1402,7 +1411,7 @@ void GPUDevice::render(RGFW_window* window)
 					image(x, y) = Vector3(pixels[y * width + x].rgb);
 			imwrite(filename, image);
 			//imwrite_raw(filename, storage_mapped, width, height);
-			LOG("Saved to \"%s\" (took %.3f seconds)", filename, tick(timer));
+			LOG("Saved to \"%s\" (took %.3f seconds) (%.1f image samples/sec)", filename, render_time, (Real)(frame_count + 1)/render_time);
 		}
 
 		frame_count += 1;
@@ -1413,6 +1422,7 @@ void GPUDevice::render(RGFW_window* window)
 
 void VulkanRawBuffer::Create(GPUDevice& gpu, VkFlags usage)
 {
+	if (data.size() == 0) return;
 	gpu.createBuffer(data.size(), usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, buffer.buffer, buffer.memory);
 	void* p;
 	vkMapMemory(gpu.device, buffer.memory, 0, VK_WHOLE_SIZE, 0, &p);
@@ -1501,7 +1511,7 @@ void Tonemapper::Tonemap(VkCommandBuffer cmd, uint32_t width, uint32_t height)
 	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
 	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, 1, &block.descriptor_set, 0, 0);
 	vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(float), &exposure);
-	vkCmdDispatch(cmd, align(width, 8u), align(height, 8u), 1);
+	vkCmdDispatch(cmd, ceil_div(width, 8u), ceil_div(height, 8u), 1);
 }
 
 // ImGui does not recommend putting itself in a DLL,

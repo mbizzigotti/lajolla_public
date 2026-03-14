@@ -12,7 +12,6 @@
 
 const Real c_default_fov = 45.0;
 const int c_default_res = 256;
-const std::string c_default_filename = "image.exr";
 const Filter c_default_filter = Box{Real(1)};;
 
 struct ParsedSampler {
@@ -590,9 +589,10 @@ RenderOptions parse_integrator(pugi::xml_node node,
 }
 
 std::tuple<int /* width */, int /* height */, std::string /* filename */, Filter>
-        parse_film(pugi::xml_node node, const std::map<std::string, std::string> &default_map) {
+        parse_film(pugi::xml_node node, const std::map<std::string, std::string>& default_map,
+            const std::string& default_filename) {
     int width = c_default_res, height = c_default_res;
-    std::string filename = c_default_filename;
+    std::string filename = default_filename;
     Filter filter = c_default_filter;
 
     for (auto child : node.children()) {
@@ -749,11 +749,12 @@ std::tuple<Camera, std::string /* output filename */, ParsedSampler>
         parse_sensor(pugi::xml_node node,
                      std::vector<Medium> &media,
                      std::map<std::string /* name id */, int /* index id */> &medium_map,
-                     const std::map<std::string, std::string> &default_map) {
+                     const std::map<std::string, std::string> &default_map,
+                     const std::string &default_filename) {
     Real fov = c_default_fov;
     Matrix4x4 to_world = Matrix4x4::identity();
     int width = c_default_res, height = c_default_res;
-    std::string filename = c_default_filename;
+    std::string filename = default_filename;
     Filter filter = c_default_filter;
     FovAxis fov_axis = FovAxis::X;
     ParsedSampler sampler;
@@ -790,7 +791,7 @@ std::tuple<Camera, std::string /* output filename */, ParsedSampler>
 
     for (auto child : node.children()) {
         if (std::string(child.name()) == "film") {
-            std::tie(width, height, filename, filter) = parse_film(child, default_map);
+            std::tie(width, height, filename, filter) = parse_film(child, default_map, default_filename);
         } else if (std::string(child.name()) == "sampler") {
             std::string name = child.attribute("type").value();
             if (name != "independent") {
@@ -1414,7 +1415,7 @@ struct SceneParser {
                   c_default_res,
                   c_default_filter,
                   -1 /*medium_id*/ };
-    std::string filename = c_default_filename;
+    std::string filename;
     std::vector<Material> materials;
     std::map<std::string /* name id */, int /* index id */> material_map;
     TexturePool texture_pool;
@@ -1438,7 +1439,7 @@ struct SceneParser {
 			} else if (name == "sensor") {
 				ParsedSampler sampler;
 				std::tie(camera, filename, sampler) =
-					parse_sensor(child, media, medium_map, default_map);
+					parse_sensor(child, media, medium_map, default_map, filename);
 				options.samples_per_pixel = sampler.sample_count;
 			} else if (name == "bsdf") {
 				std::string material_name;
@@ -1589,7 +1590,9 @@ struct SceneParser {
 		}
 		return *this;
 	}
-	std::unique_ptr<Scene> create_scene(const RTCDevice &embree_device) {
+	std::unique_ptr<Scene> create_scene(const fs::path& scene_filename, const RTCDevice &embree_device) {
+        if (filename.empty())
+            filename = std::format("reference_{}_{}spp.exr", scene_filename.stem().generic_string(), options.samples_per_pixel);
 		return std::make_unique<Scene>(
 					embree_device,
 					camera,
@@ -1602,7 +1605,9 @@ struct SceneParser {
 					options,
 					filename);
 	}
-	std::unique_ptr<Scene> create_scene(GPUDevice *gpu_device) {
+	std::unique_ptr<Scene> create_scene(const fs::path& scene_filename, GPUDevice *gpu_device) {
+        if (filename.empty())
+            filename = std::format("reference_{}_{}spp.exr", scene_filename.stem().generic_string(), options.samples_per_pixel);
 		return std::make_unique<Scene>(
 					gpu_device,
 					camera,
@@ -1628,7 +1633,7 @@ std::unique_ptr<Scene> parse_scene(const fs::path &filename, const RTCDevice &em
     // back up the current working directory and switch to the parent folder of the file
     fs::path old_path = fs::current_path();
     fs::current_path(filename.parent_path());
-    std::unique_ptr<Scene> scene = SceneParser().parse(doc.child("scene")).create_scene(embree_device);
+    std::unique_ptr<Scene> scene = SceneParser().parse(doc.child("scene")).create_scene(filename, embree_device);
     // switch back to the old current working directory
     fs::current_path(old_path);
     return scene;
@@ -1645,7 +1650,7 @@ std::unique_ptr<Scene> parse_scene(const fs::path &filename, GPUDevice *gpu_devi
     // back up the current working directory and switch to the parent folder of the file
     fs::path old_path = fs::current_path();
     fs::current_path(filename.parent_path());
-    std::unique_ptr<Scene> scene = SceneParser().parse(doc.child("scene")).create_scene(gpu_device);
+    std::unique_ptr<Scene> scene = SceneParser().parse(doc.child("scene")).create_scene(filename, gpu_device);
     // switch back to the old current working directory
     fs::current_path(old_path);
     return scene;

@@ -30,8 +30,8 @@ struct PathVertex
 
 struct ShadingInfo
 {
-    float2 uv;            // UV coordinates for texture mapping
     Frame shading_frame;  // the coordinate basis for shading
+    float2 uv;            // UV coordinates for texture mapping
     float mean_curvature; // 0.5 * (dN/du + dN/dv)
     float inv_uv_size;
 };
@@ -163,7 +163,7 @@ void chit_tri(inout HitPayload payload, in BuiltInTriangleIntersectionAttributes
 
     Frame shading_frame = { tangent, bitangent, shading_normal };
     payload.geometric_normal = geometric_normal;
-    payload.shading_info = { uv, shading_frame, mean_curvature, max(length(dpdu), length(dpdv)) };
+    payload.shading_info = { shading_frame, uv, mean_curvature, max(length(dpdu), length(dpdv)) };
     payload.t_hit = RayTCurrent();
     payload.hit = true;
 }

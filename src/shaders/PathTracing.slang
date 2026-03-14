@@ -15,6 +15,29 @@ import Ray;
 // Ray Generation Shader (Path Tracing)
 // ------------------------------------------------------------
 
+#if 0
+struct MaterialPayload {
+    Material bsdf;
+    PathVertex vertex;
+    float3 dir_in;
+    float pdf;
+    float3 dir_out;
+    float eta;
+    float3 f_or_dir;
+    float roughness;
+};
+
+[shader("callable")]
+void eval_lambertian_bsdf(inout MaterialPayload payload)
+{
+}
+
+[shader("callable")]
+void sample_lambertian_bsdf(inout MaterialPayload payload)
+{
+}
+#endif
+
 #if 1
 struct BSDFSampleRecord
 {
