@@ -52,7 +52,7 @@ struct HitPayload
 
 vector<float, N> interpolate<int N>(vector<float, N> a, vector<float, N> b, vector<float, N> c, float2 bary)
 {
-    return a * bary.x + b * bary.y + c * (1 - bary.x - bary.y);
+    return a * (1 - bary.x - bary.y) + b * bary.x + c * bary.y;
 }
 
 // ------------------------------------------------------------
@@ -81,9 +81,9 @@ void chit_tri(inout HitPayload payload, in BuiltInTriangleIntersectionAttributes
 
     float2 uvs[3];
     if (bool(shape.flags & SHAPE_HAS_UVS)) {
-        uvs[0] = scene.uvs[index[0]];
-        uvs[1] = scene.uvs[index[1]];
-        uvs[2] = scene.uvs[index[2]];
+        uvs[0] = scene.uvs.LoadByteOffset<float2>((index[0]) * sizeof(float2));
+        uvs[1] = scene.uvs.LoadByteOffset<float2>((index[1]) * sizeof(float2));
+        uvs[2] = scene.uvs.LoadByteOffset<float2>((index[2]) * sizeof(float2));
     } else {
         // Use barycentric coordinates
         uvs[0] = float2(0, 0);
@@ -138,9 +138,9 @@ void chit_tri(inout HitPayload payload, in BuiltInTriangleIntersectionAttributes
     float3 tangent, bitangent;
     // However if we have vertex normals, that overrides the geometry normal.
     if (bool(shape.flags & SHAPE_HAS_NORMALS)) {
-        float3 n0 = scene.normals[index[0]],
-               n1 = scene.normals[index[1]],
-               n2 = scene.normals[index[2]];
+        float3 n0 = scene.normals.LoadByteOffset<float3>((index[0]) * sizeof(float3)),
+               n1 = scene.normals.LoadByteOffset<float3>((index[1]) * sizeof(float3)),
+               n2 = scene.normals.LoadByteOffset<float3>((index[2]) * sizeof(float3));
         shading_normal = interpolate(n0, n1, n2, attr.barycentrics);
         // dpdu may not be orthogonal to shading normal:
         // subtract the projection of shading_normal onto dpdu to make them orthogonal

@@ -64,7 +64,7 @@ float pdf_point_on_envmap(in PointAndNormal point_on_light)
     return pdf(scene.envmap.sampling_dist, uv) / (2 * float.getPi() * float.getPi() * sin_elevation);
 }
 
-float3 emission_envmap(float3 view_dir, PointAndNormal point_on_light, float view_footprint)
+float3 emission_envmap(float3 view_dir, float view_footprint)
 {
     // View dir is pointing outwards "from" the light.
     // An environment map stores the light from the opposite direction,
@@ -93,7 +93,7 @@ float3 emission_envmap(float3 view_dir, PointAndNormal point_on_light, float vie
     // so we don't need to differentiate through it.
     float footprint = min(sqrt(dudwx * dudwx + dudwz * dudwz), dvdwy);
 
-    return eval(scene.envmap.texture, uv, footprint) * scene.envmap.scale;
+    return eval(scene.envmap.values, uv, footprint) * scene.envmap.scale;
 }
 
 PointAndNormal sample_point_on_triangle_mesh(in TableDist1D triangle_sampler, in Shape shape, float3 ref_point, float3 rnd_param)
@@ -113,9 +113,9 @@ PointAndNormal sample_point_on_triangle_mesh(in TableDist1D triangle_sampler, in
     // Flip the geometric normal to the same side as the shading normal
     if (bool(shape.flags & SHAPE_HAS_NORMALS))
 	{
-        float3 n0 = scene.normals[index[0] + shape.vertex_offset];
-        float3 n1 = scene.normals[index[1] + shape.vertex_offset];
-        float3 n2 = scene.normals[index[2] + shape.vertex_offset];
+        float3 n0 = scene.normals.LoadByteOffset<float3>((index[0] + shape.vertex_offset) * sizeof(float3));
+        float3 n1 = scene.normals.LoadByteOffset<float3>((index[1] + shape.vertex_offset) * sizeof(float3));
+        float3 n2 = scene.normals.LoadByteOffset<float3>((index[2] + shape.vertex_offset) * sizeof(float3));
         float3 shading_normal = normalize(
             (1 - b1 - b2) * n0 + b1 * n1 + b2 * n2);
         if (dot(geometric_normal, shading_normal) < 0) {
@@ -158,7 +158,7 @@ float pdf_point_on_light(in Light light, PointAndNormal point_on_light, float3 r
 float3 emission(in Light light, float3 view_dir, float view_footprint, PointAndNormal point_on_light)
 {
     if (is_envmap(light)) {
-        return emission_envmap(view_dir, point_on_light, view_footprint);
+        return emission_envmap(view_dir, view_footprint);
 	}
     return dot(point_on_light.normal, view_dir) <= 0 ? 0 : light.intensity;
 }

@@ -29,7 +29,7 @@ struct Options
     int max_depth;
     int rr_depth;
     int max_null_collisions;
-    int envmap_light_id;
+    int _padding;
 };
 
 enum FilterType : uint
@@ -89,22 +89,39 @@ struct TableDist2D
     int _padding;
 };
 
+static const int MAX_TEXTURE_COUNT = 16;
+
 struct TextureInfo
 {
-	float uscale, vscale;
-    float uoffset, voffset;
+    float3 color0;
+    int index;
+	float3 color1;
+    int is_checkerboard;
+    float2 scale;
+    float2 offset;
 };
 
-/// An environment map (Envmap) is an infinitely far area light source
-/// that covers the whole bounding spherical domain of the scene.
-/// A texture is used to represent light coming from each direction.
+struct float3_parameter
+{
+    float3 value;
+    int texture_id;
+};
+
+struct float_parameter
+{
+    float3 value;
+    int texture_id;
+};
+
 struct EnvironmentMap
 {
-    float4x4 to_world, to_local;
+    float4x4 to_world;
+	float4x4 to_local;
     TableDist2D sampling_dist;
+    float3_parameter values;
+    int2 _padding;
     float scale;
-    int texture;
-    int _padding0, _padding1;
+    int light_id;
 };
 
 struct Light
@@ -121,13 +138,14 @@ struct SceneInfo
 	Options options;
     Camera camera;
     TableDist1D light_dist;
+	EnvironmentMap envmap;
     BSphere bounds;
-//  EnvironmentMap envmap;
 };
 
 interface Material {};
 
-enum class MaterialType {
+enum class MaterialType
+{
     Lambertian,
     RoughPlastic,
     RoughDielectric,
@@ -141,23 +159,22 @@ enum class MaterialType {
 
 struct Lambertian : Material
 {
-    float3 reflectance;
-    float _padding;
+    float3_parameter reflectance;
 };
 
 struct RoughPlastic : Material
 {
     float3 diffuse_reflectance;
-    float3 specular_reflectance;
     float roughness;
+    float3 specular_reflectance;
     float eta; // internal IOR / externalIOR
 };
 
 struct RoughDielectric : Material
 {
     float3 specular_reflectance;
-    float3 specular_transmittance;
     float roughness;
+    float3 specular_transmittance;
     float eta; // internal IOR / externalIOR
 };
 

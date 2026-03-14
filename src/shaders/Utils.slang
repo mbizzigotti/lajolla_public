@@ -61,24 +61,20 @@ float3 sample_half_vector(float alpha, float2 rnd_param)
     );
 }
 
-int upper_bound(StructuredBuffer<float> arr, int offset, int count, float value)
+int upper_bound(ByteAddressBuffer arr, int offset, int count, float value)
 {
     int first = offset;
-    int last = offset + count;
-
-    while (first < last)
-    {
-        int mid = (first + last) >> 1;
-
-        if (value < arr[mid])
-        {
-            last = mid;
-        }
-        else
-        {
+    int count = count;
+    while (0 < count) { // divide and conquer, find half that contains answer
+		int count2 = count / 2;
+        int mid = first + count2;
+        float mid_value = arr.LoadByteOffset<float>(mid * sizeof(float));
+        if (value < mid_value) {
+            count = count2;
+        } else { // try top half
             first = mid + 1;
+            count -= count2 + 1;
         }
     }
-
-    return first - offset;
+    return first;
 }

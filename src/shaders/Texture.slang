@@ -1,22 +1,37 @@
 import shared;
 import Scene;
 
-SamplerState sampler;
-Texture2D textures[];
-
 float3 eval(int texture_id, float2 uv, float footprint)
 {
-    return 0;
-	#if 0
-    int width;
-    int height;
-    textures[texture_id].GetDimensions(width, height);
-    
 	TextureInfo t = scene.texture_infos[texture_id];
-    float2 local_uv = {(uv[0] * t.uscale + t.uoffset).mod(1),
-                       (uv[1] * t.vscale + t.voffset).mod(1)};
-    float scaled_footprint = float(max(width, height)) * max(t.uscale, t.vscale) * footprint;
-    float level = log2(max(scaled_footprint, 1e-8));
-   	return textures[texture_id].SampleLevel(sampler, local_uv, level).rgb;
-	#endif
+	float2 local_uv = fmod(uv * t.scale + t.offset, 1);
+
+    if (bool(t.is_checkerboard))
+    {
+        int x = 2 * int(local_uv.x * 2).mod(2) - 1;
+		int y = 2 * int(local_uv.y * 2).mod(2) - 1;
+        return x * y == 1 ? t.color0 : t.color1;
+    }
+    else
+    {
+        if (t.index != 0)
+            printf("index = %i", t.index);
+
+		int width;
+		int height;
+		scene.textures[t.index].GetDimensions(width, height);
+		
+		float scaled_footprint = float(max(width, height)) * max(t.scale.x, t.scale.y) * footprint;
+        float level = log2(max(scaled_footprint, 1e-8));
+        return scene.textures[t.index].SampleLevel(scene.sampler, local_uv, level).rgb;
+	}
+}
+
+float3 eval(float3_parameter parameter, float2 uv, float footprint)
+{
+	if (parameter.texture_id != -1)
+    {
+        return eval(parameter.texture_id, uv, footprint);
+    }
+    return parameter.value;
 }

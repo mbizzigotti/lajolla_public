@@ -12,11 +12,13 @@ struct Scene
     StructuredBuffer<Shape>          shapes;
     ByteAddressBuffer                positions;
     ByteAddressBuffer                triangles;
-    StructuredBuffer<float2>         uvs;
-    StructuredBuffer<float3>         normals;
+    ByteAddressBuffer                uvs;
+    ByteAddressBuffer                normals;
 	StructuredBuffer<Light>          lights;
 	StructuredBuffer<TextureInfo>    texture_infos;
-	StructuredBuffer<float>          values; // For light sampling!
+	ByteAddressBuffer                values; // For light sampling!
+	SamplerState                     sampler;
+	Texture2D                        textures[MAX_TEXTURE_COUNT];
 
     func accumulate_sample(uint2 pixel_index, float4 result)
     {
@@ -32,10 +34,12 @@ struct Scene
         }
 	}
 	
-    property EnvironmentMap envmap     { get { return {}; } }
+    property EnvironmentMap envmap     { get { return info.envmap; } }
     property Camera         camera     { get { return info.camera; } }
     property Options        options    { get { return info.options; } }
     property TableDist1D    light_dist { get { return info.light_dist; } }
+
+    property bool has_envmap { get { return info.envmap.light_id != -1; } }
 
     [ForceInline] float shadow_epsilon()       { return min(info.bounds.radius * 1e-5, 0.01); }
 	[ForceInline] float intersection_epsilon() { return min(info.bounds.radius * 1e-5, 0.01); }

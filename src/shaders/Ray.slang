@@ -22,9 +22,9 @@ struct RayDifferential
 };
 
 /// These functions propagate the ray differential information.
-RayDifferential init_ray_differential(int w, int h)
+RayDifferential init_ray_differential(uint2 dim)
 {
-    return RayDifferential(0, 0.25 / max(w, h));
+    return RayDifferential(0, 0.25 / float(max(dim.x, dim.y)));
 }
 
 /// Update the radius (dp/dx) of a ray differential by propagating it over a distance.

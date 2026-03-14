@@ -9,7 +9,7 @@ struct FloatArray
 
     __subscript(int index) -> float
     {
-        get { return scene.values[offset + index]; }
+        get { return scene.values.LoadByteOffset<float>((offset + index) * sizeof(float)); }
     }
 }
 
@@ -29,7 +29,7 @@ int sample(in TableDist1D table, float rnd_param)
 {
     int size = table.pmf.count;
     int k = upper_bound(scene.values, table.cdf.offset, table.cdf.count, rnd_param);
-    return clamp(int(k - 1), 0, size - 1);
+    return clamp(int(k - table.cdf.offset - 1), 0, size - 1);
 }
 
 float pmf(in TableDist1D table, int id)
@@ -41,27 +41,23 @@ float2 sample(in TableDist2D table, float2 rnd_param)
 {
     int w = table.width, h = table.height;
     // We first sample a row from the marginal distribution
-   // const Real *y_ptr = std::upper_bound(
-   //     table.cdf_marginals.data(),
-   //     table.cdf_marginals.data() + h + 1,
-   //     rnd_param[1]);
-   // int y_offset = std::clamp(int(y_ptr - table.cdf_marginals.data() - 1), 0, h - 1);
-   // // Uniformly remap rnd_param[1] to find the continuous offset 
-   // Real dy = rnd_param[1] - table.cdf_marginals[y_offset];
-   // if ((table.cdf_marginals[y_offset + 1] - table.cdf_marginals[y_offset]) > 0) {
-   //     dy /= (table.cdf_marginals[y_offset + 1] - table.cdf_marginals[y_offset]);
-   // }
-   // // Sample a column at the row y_offset
-   // const Real *cdf = &table.cdf_rows[y_offset * (w + 1)];
-   // const Real *x_ptr = std::upper_bound(cdf, cdf + w + 1, rnd_param[0]);
-   // int x_offset = std::clamp(int(x_ptr - cdf - 1), 0, w - 1);
-   // // Uniformly remap rnd_param[0]
-   // Real dx = rnd_param[0] - cdf[x_offset];
-   // if (cdf[x_offset + 1] - cdf[x_offset] > 0) {
-   //     dx /= (cdf[x_offset + 1] - cdf[x_offset]);
-   // }
-   // return Vector2 { (x_offset + dx) / w, (y_offset + dy) / h };
-    return float2(0);
+    int y_index = upper_bound(scene.values, table.marginals.cdf.offset, h + 1, rnd_param[1]);
+    int y_offset = clamp(int(y_index - table.marginals.cdf.offset - 1), 0, h - 1);
+    // Uniformly remap rnd_param[1] to find the continuous offset 
+    float dy = rnd_param[1] - table.marginals.cdf[y_offset];
+    if ((table.marginals.cdf[y_offset + 1] - table.marginals.cdf[y_offset]) > 0) {
+        dy /= (table.marginals.cdf[y_offset + 1] - table.marginals.cdf[y_offset]);
+    }
+    // Sample a column at the row y_offset
+    int cdf_start = table.rows.cdf.offset + y_offset * (w + 1);
+    int x_index = upper_bound(scene.values, cdf_start, w + 1, rnd_param[0]);
+    int x_offset = clamp(int(x_index - cdf_start - 1), 0, w - 1);
+    // Uniformly remap rnd_param[0]
+    float dx = rnd_param[0] - table.rows.cdf[cdf_start + x_offset];
+    if (table.rows.cdf[cdf_start + x_offset + 1] - table.rows.cdf[cdf_start + x_offset] > 0) {
+        dx /= (table.rows.cdf[cdf_start + x_offset + 1] - table.rows.cdf[cdf_start + x_offset]);
+    }
+    return { (x_offset + dx) / w, (y_offset + dy) / h };
 }
 
 float pdf(in TableDist2D table, float2 xy) {

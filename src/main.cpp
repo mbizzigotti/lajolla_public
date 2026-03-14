@@ -5,6 +5,7 @@
 #include "timer.h"
 #include "gpu_device.h"
 #include <embree4/rtcore.h>
+#include "3rdparty/stb_image.h"
 #include <memory>
 #include <thread>
 #include <vector>
@@ -42,6 +43,11 @@ int main(int argc, char *argv[]) {
 		RGFW_window *window = RGFW_createWindow(
 			"LaJolla!", 0, 0, scene->camera.width, scene->camera.height,
             RGFW_windowCenter | RGFW_windowNoResize);
+        { // Set Icon because why not?
+            int w, h, comp;
+            u8* pixels = stbi_load("icon.png", &w, &h, &comp, 4);
+            if (pixels) RGFW_window_setIcon(window, pixels, w, h, RGFW_formatRGBA8);
+        }
 		gpu_device.attach(window, scene.get());
 		gpu_device.render(window);
 		return 0;

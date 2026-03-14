@@ -32,7 +32,7 @@ macro(addShaderCompile arg1 arg2)
 	)
 endmacro()
 
-addShaderCompile(rgen_path_tracing Main.slang)
+addShaderCompile(rgen_path_tracing PathTracing.slang)
 addShaderCompile(miss Intersection.slang)
 addShaderCompile(miss_shadow Intersection.slang)
 addShaderCompile(chit_tri Intersection.slang)
@@ -136,6 +136,7 @@ set(SRCS src/3rdparty/miniz.h
          src/volume.cpp)
 
 add_library(lajolla_lib STATIC ${SRCS})
+target_compile_definitions(lajolla_lib PRIVATE "__DEBUG__=$<IF:$<CONFIG:Debug>,1,0>")
 add_library(RGFW SHARED "src/RGFW.cpp")
 if(APPLE)
     target_link_libraries(RGFW PRIVATE "$<LINK_LIBRARY:FRAMEWORK,Cocoa>")

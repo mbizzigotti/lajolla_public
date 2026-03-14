@@ -3,6 +3,7 @@
 #define RGFW_IMGUI_IMPLEMENTATION
 #include "3rdparty/imgui_impl_rgfw.h"
 #include "3rdparty/imgui_impl_vulkan.h"
+#include "timer.h"
 #include <fstream>
 
 #ifdef ERROR
@@ -130,13 +131,109 @@ void transition_image(VkCommandBuffer cmd, VkImage image, VkImageLayout old_layo
 	vkCmdPipelineBarrier(cmd, srcStage, dstStage, 0, 0, 0, 0, 0, 1, &barrier);
 }
 
+VkWriteDescriptorSet ShaderParameterBlock::write(const char* name, VkAccelerationStructureKHR* as)
+{
+	VkWriteDescriptorSetAccelerationStructureKHR as_info = {
+		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR,
+		.accelerationStructureCount = 1,
+		.pAccelerationStructures = as,
+	};
+	assert(descriptor_map.contains(name));
+	uint32_t binding = descriptor_map[name];
+	assert(descriptors[binding].type == VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR);
+	return {
+		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+		.pNext = push_write_structure(as_info),
+		.dstSet = descriptor_set,
+		.dstBinding = binding,
+		.descriptorCount = descriptors[binding].count,
+		.descriptorType = descriptors[binding].type,
+	};
+}
+
+VkWriteDescriptorSet ShaderParameterBlock::write(const char* name, VkImageView image_view, VkImageLayout layout)
+{
+	VkDescriptorImageInfo render_image_info = {
+		.imageView = image_view,
+		.imageLayout = layout,
+	};
+	assert(descriptor_map.contains(name));
+	uint32_t binding = descriptor_map[name];
+	assert(descriptors[binding].type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE
+		|| descriptors[binding].type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
+	return {
+		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+		.dstSet = descriptor_set,
+		.dstBinding = binding,
+		.descriptorCount = descriptors[binding].count,
+		.descriptorType = descriptors[binding].type,
+		.pImageInfo = push_write_structure(render_image_info),
+	};
+}
+
+VkWriteDescriptorSet ShaderParameterBlock::write(const char* name, VkBuffer buffer)
+{
+	VkDescriptorBufferInfo buffer_info = {
+		.buffer = buffer,
+		.offset = 0,
+		.range = VK_WHOLE_SIZE,
+	};
+	assert(descriptor_map.contains(name));
+	uint32_t binding = descriptor_map[name];
+	assert(descriptors[binding].type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
+		|| descriptors[binding].type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	return {
+		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+		.dstSet = descriptor_set,
+		.dstBinding = binding,
+		.descriptorCount = descriptors[binding].count,
+		.descriptorType = descriptors[binding].type,
+		.pBufferInfo = push_write_structure(buffer_info),
+	};
+}
+
+VkWriteDescriptorSet ShaderParameterBlock::write(const char* name, VkSampler sampler)
+{
+	VkDescriptorImageInfo image_info = {
+		.sampler = sampler,
+	};
+	assert(descriptor_map.contains(name));
+	uint32_t binding = descriptor_map[name];
+	assert(descriptors[binding].type == VK_DESCRIPTOR_TYPE_SAMPLER);
+	return {
+		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+		.dstSet = descriptor_set,
+		.dstBinding = binding,
+		.descriptorCount = descriptors[binding].count,
+		.descriptorType = descriptors[binding].type,
+		.pImageInfo = push_write_structure(image_info),
+	};
+}
+
+VkWriteDescriptorSet ShaderParameterBlock::write_many(const char* name, VkDescriptorImageInfo* images, uint32_t count)
+{
+	assert(descriptor_map.contains(name));
+	uint32_t binding = descriptor_map[name];
+	assert(descriptors[binding].type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE
+		|| descriptors[binding].type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
+	return {
+		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+		.dstSet = descriptor_set,
+		.dstBinding = binding,
+		.descriptorCount = count,
+		.descriptorType = descriptors[binding].type,
+		.pImageInfo = images,
+	};
+}
+
 struct filter_convert_op {
 	GPU::Filter operator()(const Box& filter) const { return { GPU::Box, static_cast<float>(filter.width) }; }
 	GPU::Filter operator()(const Tent& filter) const { return { GPU::Tent, static_cast<float>(filter.width) }; }
 	GPU::Filter operator()(const Gaussian& filter) const { return { GPU::Gaussian, static_cast<float>(filter.stddev) }; }
 };
 
-GPU::Camera convert(const Camera &camera) {
+GPU::Camera convert(const Camera &camera)
+{
 	GPU::Camera out;
     out.sample_to_cam = TMatrix4x4<float>(camera.sample_to_cam);
 	out.cam_to_sample = TMatrix4x4<float>(camera.cam_to_sample);
@@ -149,10 +246,43 @@ GPU::Camera convert(const Camera &camera) {
 	return out;
 }
 
+struct texture_spectrum_convert_op {
+	GPU::float3_parameter operator()(const ConstantTexture<Spectrum>& texture) {
+		GPU::float3_parameter result = {};
+		result.value = Vector3f(texture.value);
+		result.texture_id = -1;
+		return result;
+	}
+	GPU::float3_parameter operator()(const ImageTexture<Spectrum>& texture) {
+		GPU::float3_parameter result = {};
+		result.texture_id = texture_infos.Count<GPU::TextureInfo>();
+		GPU::TextureInfo info = {};
+		info.index = texture.texture_id;
+		info.offset = { texture.uoffset, texture.voffset };
+		info.scale = { texture.uscale, texture.vscale };
+		texture_infos.Add(info);
+		return result;
+	}
+	GPU::float3_parameter operator()(const CheckerboardTexture<Spectrum>& texture) {
+		GPU::float3_parameter result = {};
+		result.texture_id = texture_infos.Count<GPU::TextureInfo>();
+		GPU::TextureInfo info = {};
+		info.color0 = texture.color0;
+		info.color1 = texture.color1;
+		info.offset = { texture.uoffset, texture.voffset };
+		info.scale = { texture.uscale, texture.vscale };
+		info.is_checkerboard = 1;
+		texture_infos.Add(info);
+		return result;
+	}
+
+	VulkanRawBuffer& texture_infos;
+};
+
 struct material_convert_op {
 	void operator()(const Lambertian& bsdf) {
 		GPU::Lambertian material;
-		material.reflectance = std::get<ConstantTexture<Spectrum>>(bsdf.reflectance).value;
+		material.reflectance = std::visit(texture_spectrum_convert_op{ texture_buffer }, bsdf.reflectance);
 		raw.Add(material);
 	}
 	void operator()(const RoughPlastic& bsdf) { assert(false); }
@@ -165,27 +295,30 @@ struct material_convert_op {
 	void operator()(const DisneyBSDF& bsdf) { assert(false); }
 
 	VulkanRawBuffer& raw;
+	VulkanRawBuffer& texture_buffer;
 };
 
 struct shape_convert_op {
 	GPU::Shape operator()(const Sphere& shape) {
-		return {
-			shape.material_id,
-			shape.area_light_id,
-			shape.interior_medium_id,
-			shape.exterior_medium_id,
-		};
+		GPU::Shape result = {};
+		result.material_id = shape.material_id;
+		result.area_light_id = shape.area_light_id;
+		result.interior_medium_id = shape.interior_medium_id;
+		result.exterior_medium_id = shape.exterior_medium_id;
+		result.position = shape.position;
+		result.radius = shape.radius;
+		return result;
 	}
 	GPU::Shape operator()(const TriangleMesh& shape) {
-		GPU::Shape result = {
-			shape.material_id,
-			shape.area_light_id,
-			shape.interior_medium_id,
-			shape.exterior_medium_id,
-			vertex_offset,
-			index_offset,
-			// (shape.normals.size() > 0) ? 1 : 0, // TODO
-		};
+		GPU::Shape result = {};
+		result.material_id = shape.material_id;
+		result.area_light_id = shape.area_light_id;
+		result.interior_medium_id = shape.interior_medium_id;
+		result.exterior_medium_id = shape.exterior_medium_id;
+		result.vertex_offset = vertex_offset;
+		result.index_offset = index_offset;
+		if (shape.uvs    .size() > 0) result.flags |= GPU::SHAPE_HAS_UVS;
+		if (shape.normals.size() > 0) result.flags |= GPU::SHAPE_HAS_NORMALS;
 		vertex_offset += shape.positions.size();
 		index_offset += shape.indices.size();
 		return result;
@@ -210,13 +343,24 @@ struct light_convert_op {
 	}
 	GPU::Light operator()(const Envmap& light) {
 		GPU::Light result = {};
-		assert(false);
+		result.shape_id = -1;
 		return result;
 	}
 
 	GPUDevice& gpu;
 	const Scene& scene;
 };
+
+GPU::EnvironmentMap convert(GPUDevice& gpu, const Envmap& envmap)
+{
+	GPU::EnvironmentMap result = {};
+	result.to_local = (Matrix4x4f)(envmap.to_local);
+	result.to_world = (Matrix4x4f)(envmap.to_world);
+	result.sampling_dist = gpu.add_dist_2d(envmap.sampling_dist);
+	result.scale = (float)(envmap.scale);
+	result.values = std::visit(texture_spectrum_convert_op{gpu.texture_buffer}, envmap.values);
+	return result;
+}
 
 GPUDevice::GPUDevice()
 {
@@ -251,9 +395,9 @@ GPUDevice::GPUDevice()
 
 		VkInstanceCreateInfo createInfo {
 			.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
-			.pNext = &validation_features,
+			.pNext = __DEBUG__ ? &validation_features : 0,
 			.pApplicationInfo = &application_info,
-			.enabledLayerCount = (uint32_t)std::size(layers),
+			.enabledLayerCount = __DEBUG__ ? (uint32_t)std::size(layers) : 0,
 			.ppEnabledLayerNames = layers,
 			.enabledExtensionCount = (uint32_t)std::size(extensions),
 			.ppEnabledExtensionNames = extensions,
@@ -282,7 +426,6 @@ GPUDevice::~GPUDevice()
 	normal_buffer.buffer.Destroy(device);
 	light_buffer.buffer.Destroy(device);
 	dist_buffer.buffer.Destroy(device);
-	texture_block.Destroy(device);
 	scene_block.Destroy(device);
 	tonemapper.Destroy(device);
 
@@ -309,16 +452,59 @@ GPUDevice::~GPUDevice()
 	if (instance) vkDestroyInstance(instance, 0);
 }
 
+void GPUDevice::add_texture(const Mipmap3& mipmap)
+{
+	VkFormat format = VK_FORMAT_R32G32B32A32_SFLOAT;
+	VulkanImage texture{};
+	VkImageCreateInfo image_info = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+		.imageType = VK_IMAGE_TYPE_2D,
+		.format = format,
+		.extent = { (uint32_t)(mipmap.images[0].width), (uint32_t)(mipmap.images[0].height), 1 },
+		.mipLevels = (uint32_t)(mipmap.images.size()),
+		.arrayLayers = 1,
+		.samples = VK_SAMPLE_COUNT_1_BIT,
+		.tiling = VK_IMAGE_TILING_OPTIMAL,
+		.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+	};
+	assert(vkCreateImage(device, &image_info, nullptr, &texture.image) == VK_SUCCESS);
+
+	VkMemoryRequirements memReq;
+	vkGetImageMemoryRequirements(device, texture.image, &memReq);
+
+	VkMemoryAllocateInfo ainfo{ VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+	ainfo.allocationSize = memReq.size;
+	ainfo.memoryTypeIndex = find_memory_type(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	vkAllocateMemory(device, &ainfo, nullptr, &texture.memory);
+	vkBindImageMemory(device, texture.image, texture.memory, 0);
+
+	VkImageViewCreateInfo siv{}; siv.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+	siv.image = texture.image; siv.viewType = VK_IMAGE_VIEW_TYPE_2D; siv.format = format;
+	siv.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; siv.subresourceRange.baseMipLevel = 0;
+	siv.subresourceRange.levelCount = image_info.mipLevels;
+	siv.subresourceRange.baseArrayLayer = 0; siv.subresourceRange.layerCount = 1;
+	vkCreateImageView(device, &siv, nullptr, &texture.view);
+
+	for (int mip = 0; mip < mipmap.images.size(); ++mip)
+	{
+		write_image(texture.image, mipmap.images[mip], format, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, mip);
+	}
+
+	textures.emplace_back(texture);
+}
+
 void GPUDevice::add_shape_data(const Shape& shape)
 {
 	const TriangleMesh& mesh = std::get<TriangleMesh>(shape);
-	for (const Vector3& position : mesh.positions)
-		vertex_buffer.Add(Vector3f(position));
-	for (const Vector3i& tri : mesh.indices)
-		index_buffer.Add(tri);
-	// index_buffer.AddArray(mesh.indices);
-	// for (const Vector3& normal : mesh.normals)
-	// 	vertex_buffer.Add(Vector3f(normals));
+	vertex_buffer.AddArrayAndConvert<Vector3f>(mesh.positions);
+	index_buffer.AddArray(mesh.indices);
+	if (mesh.uvs.size() > 0) {
+		uv_buffer.AddArrayAndConvert<Vector2f>(mesh.uvs);
+	}
+	if (mesh.normals.size() > 0) {
+		normal_buffer.AddArrayAndConvert<Vector3f>(mesh.normals);
+	}
 }
 
 void GPUDevice::add_shape(uint32_t index, const GPU::Shape& gpu_shape, const Shape& shape) {
@@ -419,9 +605,37 @@ GPU::TableDist1D GPUDevice::add_dist_1d(const TableDist1D& table)
 	) };
 }
 
+GPU::TableDist2D GPUDevice::add_dist_2d(const TableDist2D& table)
+{
+	uint32_t pdf_rows_offset = dist_buffer.data.size() / sizeof(float);
+	dist_buffer.AddArrayAndConvert<float>(table.pdf_rows);
+
+	uint32_t pdf_marg_offset = dist_buffer.data.size() / sizeof(float);
+	dist_buffer.AddArrayAndConvert<float>(table.pdf_marginals);
+
+	uint32_t cdf_rows_offset = dist_buffer.data.size() / sizeof(float);
+	dist_buffer.AddArrayAndConvert<float>(table.cdf_rows);
+
+	uint32_t cdf_marg_offset = dist_buffer.data.size() / sizeof(float);
+	dist_buffer.AddArrayAndConvert<float>(table.cdf_marginals);
+
+	GPU::TableDist2D result;
+	result._pdf_cdf_rows = {
+		pdf_rows_offset, (uint32_t)(table.pdf_rows.size()), cdf_rows_offset, (uint32_t)(table.cdf_rows.size())
+	};
+	result._pdf_cdf_marginals = {
+		pdf_marg_offset, (uint32_t)(table.pdf_marginals.size()), cdf_marg_offset, (uint32_t)(table.cdf_marginals.size())
+	};
+	result.width = table.width;
+	result.height = table.height;
+	result.total_values = table.total_values;
+	return result;
+}
+
 void GPUDevice::attach(RGFW_window* window, Scene* scene)
 {
 	QueueFamilyIndices indices;
+	VkPipelineShaderStageCreateInfo stages[4] = {};
 	
 	LOG("Creating Window Surface...");
 	{
@@ -655,13 +869,6 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 	}
 	LOG("Creating Layouts...");
 	{
-		texture_block.add_binding("sampler",  VK_DESCRIPTOR_TYPE_SAMPLER);
-		texture_block.add_binding("textures", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE);
-
-		texture_block.shader_stages = VK_SHADER_STAGE_RAYGEN_BIT_KHR
-			                        | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
-		texture_block.CreateLayout(device);
-
 		scene_block.add_binding("image",    VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
 		scene_block.add_binding("as",       VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR);
 		scene_block.add_binding("info",     VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
@@ -674,6 +881,8 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 		scene_block.add_binding("light",    VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 		scene_block.add_binding("tex",      VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 		scene_block.add_binding("dist",     VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+		scene_block.add_binding("sampler",  VK_DESCRIPTOR_TYPE_SAMPLER);
+		scene_block.add_binding("textures", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, GPU::MAX_TEXTURE_COUNT);
 
 		scene_block.shader_stages = VK_SHADER_STAGE_RAYGEN_BIT_KHR
 			                      | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
@@ -684,7 +893,6 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 			.size = sizeof(GPU::PerFrameInfo),
 		};
 		VkDescriptorSetLayout layouts[] = {
-			texture_block.descriptor_set_layout,
 			scene_block.descriptor_set_layout,
 		};
 		VkPipelineLayoutCreateInfo plci {
@@ -696,9 +904,6 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 		};
 		assert(vkCreatePipelineLayout(device, &plci, 0, &pipeline_layout) == VK_SUCCESS);
 	}
-
-	VkPipelineShaderStageCreateInfo stages[4] = {};
-
 	LOG("Loading Shaders...");
 	{
 		stages[0] = load_shader_stage(VK_SHADER_STAGE_RAYGEN_BIT_KHR, "rgen_path_tracing");
@@ -756,18 +961,36 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 		};
 		assert(vkCreateRayTracingPipelinesKHR(device, 0, 0, 1, &pipeline_info, nullptr, &pipeline) == VK_SUCCESS);
 	}
-
-	for (const auto& stage: stages)
-		if (stage.module) vkDestroyShaderModule(device, stage.module, 0);
-
+	LOG("Create Sampler...");
+	{
+		VkSamplerCreateInfo sampler_info = {
+			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+			.magFilter = VK_FILTER_LINEAR,
+			.minFilter = VK_FILTER_LINEAR,
+			.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+			.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+			.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+		};
+		assert(vkCreateSampler(device, &sampler_info, 0, &sampler) == VK_SUCCESS);
+	}
 	LOG("Creating Constant Buffers...");
 	{
 		GPU::SceneInfo scene_info = {};
 		{
+			for (const Mipmap3& texture : scene->texture_pool.image3s) {
+				add_texture(texture);
+			}
+
+			if (scene->envmap_light_id != -1) {
+				scene_info.envmap = convert(*this, std::get<Envmap>(scene->lights[scene->envmap_light_id]));
+			}
+		}
+		{
 			for (const Material& material : scene->materials) {
-				std::visit(material_convert_op{ material_buffer }, material);
+				std::visit(material_convert_op{ material_buffer, texture_buffer }, material);
 			}
 			material_buffer.Create(*this, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+			texture_buffer.Create(*this, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
 		}
 		{
 			uint32_t vertex_offset = 0;
@@ -821,10 +1044,14 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 			scene_info.options.max_depth = scene->options.max_depth;
 			scene_info.options.rr_depth = scene->options.rr_depth;
 			scene_info.options.max_null_collisions = scene->options.max_null_collisions;
-			scene_info.options.envmap_light_id = scene->envmap_light_id;
+			scene_info.envmap.light_id = scene->envmap_light_id;
 			info_buffer.Add(scene_info);
 			info_buffer.CreateFromStaging(*this, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
 		}
+	}
+	LOG("Creating Textures...");
+	{
+		printf("how");
 	}
 	LOG("Creating Acceleration Structures...");
 	{
@@ -844,16 +1071,16 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 			.geometryCount = 1,
 			.pGeometries = &iGeom,
 		};
-		uint32_t maxPrimCountsTLAS[10] = { 1000 };
+		uint32_t primitive_count = (uint32_t)(bass.size());
 		VkAccelerationStructureBuildSizesInfoKHR tSizes{ VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR };
-		vkGetAccelerationStructureBuildSizesKHR(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &tBuildInfo, maxPrimCountsTLAS, &tSizes);
+		vkGetAccelerationStructureBuildSizesKHR(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &tBuildInfo, &primitive_count, &tSizes);
 
 		createBuffer(tSizes.accelerationStructureSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, tas.buffer.buffer, tas.buffer.memory);
 		VkAccelerationStructureCreateInfoKHR tcreate{ VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR }; tcreate.buffer = tas.buffer.buffer; tcreate.size = tSizes.accelerationStructureSize; tcreate.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
 		vkCreateAccelerationStructureKHR(device, &tcreate, nullptr, &tas.handle);
 
 		VkAccelerationStructureBuildRangeInfoKHR build_range = {
-			.primitiveCount = (uint32_t)(scene->shapes.size()),
+			.primitiveCount = primitive_count,
 		};
 		const VkAccelerationStructureBuildRangeInfoKHR* pRanges = &build_range;
 
@@ -923,8 +1150,14 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 		assert(vkCreateDescriptorPool(device, &pool_info, 0, &descriptor_pool) == VK_SUCCESS);
 
 		scene_block.Allocate(device, descriptor_pool);
-		texture_block.Allocate(device, descriptor_pool);
 
+		std::vector<VkDescriptorImageInfo> image_infos;
+		for (VulkanImage& image : textures) {
+			image_infos.emplace_back(VkDescriptorImageInfo{
+				.imageView = image.view,
+				.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			});
+		}
 		VkWriteDescriptorSet writes[] = {
 			scene_block.write("image",    storage_view),
 			scene_block.write("as",       &tas.handle),
@@ -935,9 +1168,11 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 			scene_block.write("triangle", index_buffer),
 			scene_block.write("uv",       uv_buffer),
 			scene_block.write("normal",   normal_buffer),
-		    scene_block.write("light",    light_buffer),
-		//  scene_block.write("tex",      texture_buffer),
-		    scene_block.write("dist",     dist_buffer),
+			scene_block.write("light",    light_buffer),
+			scene_block.write("tex",      texture_buffer),
+			scene_block.write("dist",     dist_buffer),
+			scene_block.write("sampler",  sampler),
+			scene_block.write_many("textures", image_infos.data(), image_infos.size()),
 		};
 		vkUpdateDescriptorSets(device, (uint32_t)std::size(writes), writes, 0, 0);
 	}
@@ -1033,11 +1268,18 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene)
 	{
 		tonemapper.Create(*this);
 	}
+
+	for (const auto& stage : stages)
+		if (stage.module) vkDestroyShaderModule(device, stage.module, 0);
+
 	target_sample_count = (uint32_t)(scene->options.samples_per_pixel);
 }
 
 void GPUDevice::render(RGFW_window* window)
 {
+	Timer timer;
+	tick(timer);
+
 	VkCommandBufferAllocateInfo ca{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO }; ca.commandPool = command_pool; ca.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; ca.commandBufferCount = 1;
 	VkCommandBuffer cmd; vkAllocateCommandBuffers(device, &ca, &cmd);
 
@@ -1075,7 +1317,6 @@ void GPUDevice::render(RGFW_window* window)
 
 		// bind pipeline and descriptor sets and trace
 		VkDescriptorSet sets[] = {
-			texture_block.descriptor_set,
 			scene_block.descriptor_set,
 		};
 		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, pipeline);
@@ -1150,8 +1391,18 @@ void GPUDevice::render(RGFW_window* window)
 			int height = (int)(image_extent.height);
 			char filename[256] = {};
 			snprintf(filename, 256, "image_%uspp.exr", frame_count + 1);
-			imwrite_raw(filename, storage_mapped, width, height);
-			LOG("Saved to \"%s\"", filename);
+			Image3 image(width, height);
+			struct Pixel {
+				Vector3f rgb;
+				float a;
+			};
+			Pixel* pixels = (Pixel*)storage_mapped;
+			for (int y = 0; y < height; ++y)
+				for (int x = 0; x < width; ++x)
+					image(x, y) = Vector3(pixels[y * width + x].rgb);
+			imwrite(filename, image);
+			//imwrite_raw(filename, storage_mapped, width, height);
+			LOG("Saved to \"%s\" (took %.3f seconds)", filename, tick(timer));
 		}
 
 		frame_count += 1;

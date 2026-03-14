@@ -38,6 +38,12 @@ struct VulkanRawBuffer {
 	void GetDeviceAddress(VkDevice device);
 
 	template <typename T>
+	uint32_t Count() {
+		assert(data.size() % sizeof(T) == 0);
+		return data.size() / sizeof(T);
+	}
+
+	template <typename T>
 	void Add(const T& t) {
 		uint8_t* bytes = (uint8_t*)(&t);
 		uint32_t size = sizeof(T);
@@ -67,6 +73,12 @@ struct VulkanRawBuffer {
 	}
 };
 
+struct VulkanImage {
+	VkDeviceMemory  memory{ 0 };
+	VkImage         image{ 0 };
+	VkImageView     view{ 0 };
+};
+
 struct ShaderParameterBlock {
 	VkDescriptorSet        descriptor_set{ 0 };
 	VkDescriptorSetLayout  descriptor_set_layout{ 0 };
@@ -92,66 +104,11 @@ struct ShaderParameterBlock {
 		descriptor_map[name] = index;
 	}
 
-	VkWriteDescriptorSet write(const char* name, VkAccelerationStructureKHR* as)
-	{
-		VkWriteDescriptorSetAccelerationStructureKHR as_info = {
-			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR,
-			.accelerationStructureCount = 1,
-			.pAccelerationStructures = as,
-		};
-		assert(descriptor_map.contains(name));
-		uint32_t binding = descriptor_map[name];
-		assert(descriptors[binding].type == VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR);
-		return {
-			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-			.pNext = push_write_structure(as_info),
-			.dstSet = descriptor_set,
-			.dstBinding = binding,
-			.descriptorCount = descriptors[binding].count,
-			.descriptorType = descriptors[binding].type,
-		};
-	}
-	
-	VkWriteDescriptorSet write(const char* name, VkImageView image_view, VkImageLayout layout = VK_IMAGE_LAYOUT_GENERAL)
-	{
-		VkDescriptorImageInfo render_image_info = {
-			.imageView = image_view,
-			.imageLayout = layout,
-		};
-		assert(descriptor_map.contains(name));
-		uint32_t binding = descriptor_map[name];
-		assert(descriptors[binding].type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE
-			|| descriptors[binding].type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
-		return {
-			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-			.dstSet = descriptor_set,
-			.dstBinding = binding,
-			.descriptorCount = descriptors[binding].count,
-			.descriptorType = descriptors[binding].type,
-			.pImageInfo = push_write_structure(render_image_info),
-		};
-	}
-	
-	VkWriteDescriptorSet write(const char* name, VkBuffer buffer)
-	{
-		VkDescriptorBufferInfo buffer_info = {
-			.buffer = buffer,
-			.offset = 0,
-			.range = VK_WHOLE_SIZE,
-		};
-		assert(descriptor_map.contains(name));
-		uint32_t binding = descriptor_map[name];
-		assert(descriptors[binding].type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
-			|| descriptors[binding].type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-		return {
-			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-			.dstSet = descriptor_set,
-			.dstBinding = binding,
-			.descriptorCount = descriptors[binding].count,
-			.descriptorType = descriptors[binding].type,
-			.pBufferInfo = push_write_structure(buffer_info),
-		};
-	}
+	VkWriteDescriptorSet write(const char* name, VkAccelerationStructureKHR* as);
+	VkWriteDescriptorSet write(const char* name, VkImageView image_view, VkImageLayout layout = VK_IMAGE_LAYOUT_GENERAL);
+	VkWriteDescriptorSet write(const char* name, VkBuffer buffer);
+	VkWriteDescriptorSet write(const char* name, VkSampler sampler);
+	VkWriteDescriptorSet write_many(const char* name, VkDescriptorImageInfo* images, uint32_t count);
 
 	template <typename T>
 	T* push_write_structure(const T& s)
@@ -276,11 +233,13 @@ struct GPUDevice {
 	VulkanRawBuffer                 uv_buffer{};
 	VulkanRawBuffer                 normal_buffer{};
 	VulkanRawBuffer                 light_buffer{};
+	VulkanRawBuffer                 texture_buffer{};
 	VulkanRawBuffer                 dist_buffer{};
-	ShaderParameterBlock            texture_block{};
+	VkSampler                       sampler{ 0 };
 	ShaderParameterBlock            scene_block{};
 	uint32_t                        target_sample_count{ 16 * 1024 };
 	
+	std::vector<VulkanImage>                 textures;
 	std::vector<VulkanAccelerationStructure> bass;
 
 	VkRenderPass render_pass{ 0 };
@@ -292,9 +251,11 @@ struct GPUDevice {
 	void attach(RGFW_window* window, Scene *scene);
 	void render(RGFW_window *window);
 
+	void add_texture(const Mipmap3& texture);
 	void add_shape_data(const Shape &shape);
 	void add_shape(uint32_t index, const GPU::Shape& gpu_shape, const Shape &shape);
 	GPU::TableDist1D add_dist_1d(const TableDist1D& table);
+	GPU::TableDist2D add_dist_2d(const TableDist2D& table);
 	VkPipelineShaderStageCreateInfo load_shader_stage(VkFlags stage, const char* name);
 
 	uint32_t find_memory_type(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
@@ -342,6 +303,92 @@ struct GPUDevice {
 		VkSubmitInfo si{ VK_STRUCTURE_TYPE_SUBMIT_INFO }; si.commandBufferCount = 1; si.pCommandBuffers = &cmd;
 		vkQueueSubmit(graphics_queue, 1, &si, VK_NULL_HANDLE);
 		vkQueueWaitIdle(graphics_queue);
+		vkFreeCommandBuffers(device, command_pool, 1, &cmd);
+	}
+
+	uint32_t format_size(VkFormat format) {
+		switch (format) {
+		case VK_FORMAT_R32G32B32A32_SFLOAT: return sizeof(Vector4f);
+		default: return 0;
+		}
+	}
+
+	void write_image(VkImage dstImage, const Image3& source, VkFormat format, VkImageLayout outLayout, int level) {
+		VkDeviceSize  data_size = source.width * source.height * format_size(format);
+		VulkanBuffer staging{};
+
+		// 2. Copy Image Data to Staging Buffer
+		{
+			createBuffer(data_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, staging.buffer, staging.memory);
+			Vector4f* data;
+			vkMapMemory(device, staging.memory, 0, data_size, 0, (void**)&data);
+			int pixel_count = source.width * source.height;
+			for (int i = 0; i < pixel_count; ++i) {
+				Vector3f color = source(i);
+				data[i] = Vector4f(color.x, color.y, color.z, 1.0f);
+			}
+			vkUnmapMemory(device, staging.memory);
+		}
+
+		// 3. Allocate and Begin writing to a Command Buffer for Transfer operations
+		VkCommandBuffer cmd;
+		VkCommandBufferAllocateInfo commandBufferInfo{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+		commandBufferInfo.commandBufferCount = 1;
+		commandBufferInfo.commandPool = command_pool;
+		commandBufferInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		vkAllocateCommandBuffers(device, &commandBufferInfo, &cmd);
+		{
+			VkCommandBufferBeginInfo beginInfo{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+			beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+			vkBeginCommandBuffer(cmd, &beginInfo);
+
+			// 4. Set Image Layout for transfer
+			VkImageSubresourceRange range;
+			range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			range.baseMipLevel = level;
+			range.levelCount = 1;
+			range.baseArrayLayer = 0;
+			range.layerCount = 1;
+			VkImageMemoryBarrier imageBarrier_toTransfer = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+			imageBarrier_toTransfer.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+			imageBarrier_toTransfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+			imageBarrier_toTransfer.image = dstImage;
+			imageBarrier_toTransfer.subresourceRange = range;
+			imageBarrier_toTransfer.srcAccessMask = 0;
+			imageBarrier_toTransfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &imageBarrier_toTransfer);
+
+			// 5. Copy from Staging Buffer to Destination Image
+			VkBufferImageCopy copyRegion{};
+			copyRegion.bufferOffset = 0;
+			copyRegion.bufferRowLength = 0;
+			copyRegion.bufferImageHeight = 0;
+			copyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			copyRegion.imageSubresource.mipLevel = level;
+			copyRegion.imageSubresource.baseArrayLayer = 0;
+			copyRegion.imageSubresource.layerCount = 1;
+			copyRegion.imageExtent = { (uint32_t)(source.width), (uint32_t)(source.height), 1 };
+			vkCmdCopyBufferToImage(cmd, staging.buffer, dstImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+
+			// 6. Set Image Layout to the Output Layout
+			VkImageMemoryBarrier imageBarrier_toReadable{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+			imageBarrier_toReadable.image = dstImage;
+			imageBarrier_toReadable.subresourceRange = range;
+			imageBarrier_toReadable.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+			imageBarrier_toReadable.newLayout = outLayout;
+			imageBarrier_toReadable.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			imageBarrier_toReadable.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+			vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &imageBarrier_toReadable);
+			vkEndCommandBuffer(cmd);
+
+			// 7. Sumbit commands to GPU and wait for them to complete
+			VkSubmitInfo submitInfo{ VK_STRUCTURE_TYPE_SUBMIT_INFO };
+			submitInfo.commandBufferCount = 1;
+			submitInfo.pCommandBuffers = &cmd;
+			vkQueueSubmit(graphics_queue, 1, &submitInfo, VK_NULL_HANDLE);
+			vkQueueWaitIdle(graphics_queue);
+			staging.Destroy(device);
+		}
 		vkFreeCommandBuffers(device, command_pool, 1, &cmd);
 	}
 };
