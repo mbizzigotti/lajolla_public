@@ -607,8 +607,14 @@ void GPUDevice::add_shape_data(const Shape& shape)
 	if (mesh.uvs.size() > 0) {
 		uv_buffer.AddArrayAndConvert<Vector2f>(mesh.uvs);
 	}
+	else {
+		uv_buffer.AddZeros<Vector2f>(mesh.positions.size());
+	}
 	if (mesh.normals.size() > 0) {
 		normal_buffer.AddArrayAndConvert<Vector3f>(mesh.normals);
+	}
+	else {
+		normal_buffer.AddZeros<Vector3f>(mesh.positions.size());
 	}
 }
 

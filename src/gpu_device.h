@@ -44,6 +44,14 @@ struct VulkanRawBuffer {
 	}
 
 	template <typename T>
+	void AddZeros(size_t count) {
+		uint32_t size = count * sizeof(T);
+		data.reserve(data.size() + size);
+		for (uint32_t i = 0; i < size; ++i)
+			data.emplace_back(0);
+	}
+
+	template <typename T>
 	void Add(const T& t) {
 		uint8_t* bytes = (uint8_t*)(&t);
 		uint32_t size = sizeof(T);

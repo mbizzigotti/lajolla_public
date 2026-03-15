@@ -49,7 +49,7 @@ extension Camera
         ray.Origin = xform_point(cam_to_world, float3(0, 0, 0));
         ray.Direction = normalize(xform_vector(cam_to_world, dir));
         ray.TMin = 0;
-        ray.TMax = 1e9;
+        ray.TMax = float.maxValue;
         return ray;
 	}
 };
