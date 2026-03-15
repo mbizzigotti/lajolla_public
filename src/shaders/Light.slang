@@ -1,4 +1,4 @@
-import shared;
+import Shared;
 import Utils;
 import Scene;
 import TableDist;
@@ -93,7 +93,7 @@ float3 emission_envmap(float3 view_dir, float view_footprint)
     // so we don't need to differentiate through it.
     float footprint = min(sqrt(dudwx * dudwx + dudwz * dudwz), dvdwy);
 
-    return eval(scene.envmap.values, uv, footprint) * scene.envmap.scale;
+    return eval3(scene.envmap.values, uv, footprint) * scene.envmap.scale;
 }
 
 PointAndNormal sample_point_on_triangle_mesh(in TableDist1D triangle_sampler, in Shape shape, float3 ref_point, float3 rnd_param)

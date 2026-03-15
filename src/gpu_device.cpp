@@ -252,14 +252,14 @@ GPU::Camera convert(const Camera &camera)
 }
 
 struct texture_spectrum_convert_op {
-	GPU::float3_parameter operator()(const ConstantTexture<Spectrum>& texture) {
-		GPU::float3_parameter result = {};
+	GPU::Parameter operator()(const ConstantTexture<Spectrum>& texture) {
+		GPU::Parameter result = {};
 		result.value = Vector3f(texture.value);
 		result.texture_id = -1;
 		return result;
 	}
-	GPU::float3_parameter operator()(const ImageTexture<Spectrum>& texture) {
-		GPU::float3_parameter result = {};
+	GPU::Parameter operator()(const ImageTexture<Spectrum>& texture) {
+		GPU::Parameter result = {};
 		result.texture_id = texture_infos.Count<GPU::TextureInfo>();
 		GPU::TextureInfo info = {};
 		info.index = texture.texture_id;
@@ -268,8 +268,8 @@ struct texture_spectrum_convert_op {
 		texture_infos.Add(info);
 		return result;
 	}
-	GPU::float3_parameter operator()(const CheckerboardTexture<Spectrum>& texture) {
-		GPU::float3_parameter result = {};
+	GPU::Parameter operator()(const CheckerboardTexture<Spectrum>& texture) {
+		GPU::Parameter result = {};
 		result.texture_id = texture_infos.Count<GPU::TextureInfo>();
 		GPU::TextureInfo info = {};
 		info.color0 = texture.color0;
@@ -284,20 +284,120 @@ struct texture_spectrum_convert_op {
 	VulkanRawBuffer& texture_infos;
 };
 
+struct texture_real_convert_op {
+	GPU::Parameter operator()(const ConstantTexture<Real>& texture) {
+		GPU::Parameter result = {};
+		result.value.x = (float)(texture.value);
+		result.texture_id = -1;
+		return result;
+	}
+	GPU::Parameter operator()(const ImageTexture<Real>& texture) {
+		GPU::Parameter result = {};
+		result.texture_id = texture_infos.Count<GPU::TextureInfo>();
+		GPU::TextureInfo info = {};
+		info.index = texture.texture_id;
+		info.offset = { texture.uoffset, texture.voffset };
+		info.scale = { texture.uscale, texture.vscale };
+		texture_infos.Add(info);
+		return result;
+	}
+	GPU::Parameter operator()(const CheckerboardTexture<Real>& texture) {
+		GPU::Parameter result = {};
+		result.texture_id = texture_infos.Count<GPU::TextureInfo>();
+		GPU::TextureInfo info = {};
+		info.color0.x = texture.color0;
+		info.color1.x = texture.color1;
+		info.offset = { texture.uoffset, texture.voffset };
+		info.scale = { texture.uscale, texture.vscale };
+		info.is_checkerboard = 1;
+		texture_infos.Add(info);
+		return result;
+	}
+
+	VulkanRawBuffer& texture_infos;
+};
+
 struct material_convert_op {
 	void operator()(const Lambertian& bsdf) {
-		GPU::Lambertian material;
-		material.reflectance = std::visit(texture_spectrum_convert_op{ texture_buffer }, bsdf.reflectance);
+		GPU::Material material = {};
+		material.type = GPU::MaterialType::Lambertian;
+		material.param0 = std::visit(texture_spectrum_convert_op{ texture_buffer }, bsdf.reflectance);
 		raw.Add(material);
 	}
-	void operator()(const RoughPlastic& bsdf) { assert(false); }
-	void operator()(const RoughDielectric& bsdf) { assert(false); }
-	void operator()(const DisneyDiffuse& bsdf) { assert(false); }
-	void operator()(const DisneyMetal& bsdf) { assert(false); }
-	void operator()(const DisneyGlass& bsdf) { assert(false); }
-	void operator()(const DisneyClearcoat& bsdf) { assert(false); }
-	void operator()(const DisneySheen& bsdf) { assert(false); }
-	void operator()(const DisneyBSDF& bsdf) { assert(false); }
+	void operator()(const RoughPlastic& bsdf) {
+		GPU::Material material = {};
+		material.type = GPU::MaterialType::RoughPlastic;
+		material.param0 = std::visit(texture_spectrum_convert_op{ texture_buffer }, bsdf.diffuse_reflectance);
+		material.param1 = std::visit(texture_spectrum_convert_op{ texture_buffer }, bsdf.specular_reflectance);
+		material.param2 = std::visit(texture_real_convert_op{ texture_buffer }, bsdf.roughness);
+		material.eta = bsdf.eta;
+		raw.Add(material);
+	}
+	void operator()(const RoughDielectric& bsdf) {
+		GPU::Material material = {};
+		material.type = GPU::MaterialType::RoughDielectric;
+		material.param0 = std::visit(texture_spectrum_convert_op{ texture_buffer }, bsdf.specular_transmittance);
+		material.param1 = std::visit(texture_spectrum_convert_op{ texture_buffer }, bsdf.specular_reflectance);
+		material.param2 = std::visit(texture_real_convert_op{ texture_buffer }, bsdf.roughness);
+		material.eta = bsdf.eta;
+		raw.Add(material);
+	}
+	void operator()(const DisneyDiffuse& bsdf) {
+		GPU::Material material = {};
+		material.type = GPU::MaterialType::DisneyDiffuse;
+		material.param0 = std::visit(texture_spectrum_convert_op{ texture_buffer }, bsdf.base_color);
+		material.param1 = std::visit(texture_real_convert_op{ texture_buffer }, bsdf.subsurface);
+		material.param2 = std::visit(texture_real_convert_op{ texture_buffer }, bsdf.roughness);
+		raw.Add(material);
+	}
+	void operator()(const DisneyMetal& bsdf) {
+		GPU::Material material = {};
+		material.type = GPU::MaterialType::DisneyMetal;
+		material.param0 = std::visit(texture_spectrum_convert_op{ texture_buffer }, bsdf.base_color);
+		material.param2 = std::visit(texture_real_convert_op{ texture_buffer }, bsdf.roughness);
+		material.param3 = std::visit(texture_real_convert_op{ texture_buffer }, bsdf.anisotropic);
+		raw.Add(material);
+	}
+	void operator()(const DisneyGlass& bsdf) {
+		GPU::Material material = {};
+		material.type = GPU::MaterialType::DisneyGlass;
+		material.param0 = std::visit(texture_spectrum_convert_op{ texture_buffer }, bsdf.base_color);
+		material.param2 = std::visit(texture_real_convert_op{ texture_buffer }, bsdf.roughness);
+		material.param3 = std::visit(texture_real_convert_op{ texture_buffer }, bsdf.anisotropic);
+		material.eta = bsdf.eta;
+		raw.Add(material);
+	}
+	void operator()(const DisneyClearcoat& bsdf) {
+		GPU::Material material = {};
+		material.type = GPU::MaterialType::DisneyClearcoat;
+		material.param4 = std::visit(texture_real_convert_op{ texture_buffer }, bsdf.clearcoat_gloss);
+		raw.Add(material);
+	}
+	void operator()(const DisneySheen& bsdf) {
+		GPU::Material material = {};
+		material.type = GPU::MaterialType::DisneySheen;
+		material.param0 = std::visit(texture_spectrum_convert_op{ texture_buffer }, bsdf.base_color);
+		material.param5 = std::visit(texture_real_convert_op{ texture_buffer }, bsdf.sheen_tint);
+		raw.Add(material);
+	}
+	void operator()(const DisneyBSDF& bsdf) {
+		GPU::Material material = {};
+		material.type = GPU::MaterialType::DisneyBSDF;
+		material.param0 = std::visit(texture_spectrum_convert_op{ texture_buffer }, bsdf.base_color);
+		material.param1 = std::visit(texture_real_convert_op{ texture_buffer }, bsdf.subsurface);
+		material.param2 = std::visit(texture_real_convert_op{ texture_buffer }, bsdf.roughness);
+		material.param3 = std::visit(texture_real_convert_op{ texture_buffer }, bsdf.anisotropic);
+		material.param4 = std::visit(texture_real_convert_op{ texture_buffer }, bsdf.clearcoat_gloss);
+		material.param5 = std::visit(texture_real_convert_op{ texture_buffer }, bsdf.sheen_tint);
+		material.param6 = std::visit(texture_real_convert_op{ texture_buffer }, bsdf.specular_transmission);
+		material.param7 = std::visit(texture_real_convert_op{ texture_buffer }, bsdf.metallic);
+		material.param8 = std::visit(texture_real_convert_op{ texture_buffer }, bsdf.specular);
+		material.param9 = std::visit(texture_real_convert_op{ texture_buffer }, bsdf.specular_tint);
+		material.param10 = std::visit(texture_real_convert_op{ texture_buffer }, bsdf.sheen);
+		material.param11 = std::visit(texture_real_convert_op{ texture_buffer }, bsdf.clearcoat);
+		material.eta = bsdf.eta;
+		raw.Add(material);
+	}
 
 	VulkanRawBuffer& raw;
 	VulkanRawBuffer& texture_buffer;
@@ -1399,16 +1499,22 @@ void GPUDevice::render(RGFW_window* window)
 			int width = (int)(image_extent.width);
 			int height = (int)(image_extent.height);
 			char filename[256] = {};
-			snprintf(filename, 256, "gpu_%s_%uspp.exr", scene_name, frame_count + 1);
+			snprintf(filename, 256, "gpu_%s_%uspp.exr", scene_name.c_str(), frame_count + 1);
 			Image3 image(width, height);
 			struct Pixel {
 				Vector3f rgb;
 				float a;
+
+				Vector3 convert() {
+					if (isnan(rgb.x) || isnan(rgb.y) || isnan(rgb.z))
+						return Vector3(0.0, 1.0, 1.0);
+					return Vector3(rgb);
+				}
 			};
 			Pixel* pixels = (Pixel*)storage_mapped;
 			for (int y = 0; y < height; ++y)
 				for (int x = 0; x < width; ++x)
-					image(x, y) = Vector3(pixels[y * width + x].rgb);
+					image(x, y) = pixels[y * width + x].convert();
 			imwrite(filename, image);
 			//imwrite_raw(filename, storage_mapped, width, height);
 			LOG("Saved to \"%s\" (took %.3f seconds) (%.1f image samples/sec)", filename, render_time, (Real)(frame_count + 1)/render_time);

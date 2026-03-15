@@ -101,13 +101,7 @@ struct TextureInfo
     float2 offset;
 };
 
-struct float3_parameter
-{
-    float3 value;
-    int texture_id;
-};
-
-struct float_parameter
+struct Parameter
 {
     float3 value;
     int texture_id;
@@ -118,7 +112,7 @@ struct EnvironmentMap
     float4x4 to_world;
 	float4x4 to_local;
     TableDist2D sampling_dist;
-    float3_parameter values;
+    Parameter values;
     int2 _padding;
     float scale;
     int light_id;
@@ -142,8 +136,6 @@ struct SceneInfo
     BSphere bounds;
 };
 
-interface Material {};
-
 enum class MaterialType
 {
     Lambertian,
@@ -157,77 +149,79 @@ enum class MaterialType
     DisneyBSDF,
 };
 
-struct Lambertian : Material
+struct Material
 {
-    float3_parameter reflectance;
-};
-
-struct RoughPlastic : Material
-{
-    float3 diffuse_reflectance;
-    float roughness;
-    float3 specular_reflectance;
-    float eta; // internal IOR / externalIOR
-};
-
-struct RoughDielectric : Material
-{
-    float3 specular_reflectance;
-    float roughness;
-    float3 specular_transmittance;
-    float eta; // internal IOR / externalIOR
-};
-
-struct DisneyDiffuse : Material
-{
-    float3 base_color;
-    float roughness;
-    float subsurface;
-};
-
-struct DisneyMetal : Material
-{
-    float3 base_color;
-    float roughness;
-    float anisotropic;
-};
-
-struct DisneyGlass : Material
-{
-    float3 base_color;
-    float roughness;
-    float anisotropic;
-    float eta; // internal IOR / externalIOR
-};
-
-struct DisneyClearcoat : Material
-{
-    float clearcoat_gloss;
-};
-
-struct DisneySheen : Material
-{
-    float3 base_color;
-    float sheen_tint;
-};
-
-struct DisneyBSDF : Material
-{
-    float3 base_color;
-    float specular_transmission;
-    float metallic;
-    float subsurface;
-    float specular;
-    float roughness;
-    float specular_tint;
-    float anisotropic;
-    float sheen;
-    float sheen_tint;
-    float clearcoat;
-    float clearcoat_gloss;
+    Parameter param0;
+    Parameter param1;
+    Parameter param2;
+    Parameter param3;
+    Parameter param4;
+    Parameter param5;
+    Parameter param6;
+    Parameter param7;
+    Parameter param8;
+    Parameter param9;
+    Parameter param10;
+    Parameter param11;
+    float2 _padding;
     float eta;
+    MaterialType type;
 };
 
 #ifdef __cplusplus
+}
+#endif
+
+#ifndef __cplusplus
+extension Material
+{
+    // Lambertian
+    property Parameter reflectance          { get { return param0; } }
+
+    // RoughPlastic
+    property Parameter diffuse_reflectance  { get { return param0; } }
+    property Parameter specular_reflectance { get { return param1; } }
+    property Parameter roughness            { get { return param2; } }
+
+    // RoughDielectric
+    property Parameter specular_transmittance { get { return param0; } }
+    // + specular_reflectance
+    // + roughness
+
+    // DisneyDiffuse
+    property Parameter base_color { get { return param0; } }
+    property Parameter subsurface { get { return param1; } }
+    // + roughness
+
+    // DisneyMetal
+    property Parameter anisotropic { get { return param3; } }
+    // + roughness
+    // + base_color
+
+    // DisneyGlass
+    // + base_color
+    // + roughness
+    // + anisotropic
+
+    // DisneyClearcoat
+    property Parameter clearcoat_gloss       { get { return param4; } }
+
+    // DisneySheen
+    property Parameter sheen_tint            { get { return param5; } }
+    // + base_color
+
+    // DisneyBSDF
+    property Parameter specular_transmission { get { return param6; } }
+    property Parameter metallic              { get { return param7; } }
+    property Parameter specular              { get { return param8; } }
+    property Parameter specular_tint         { get { return param9; } }
+    property Parameter sheen                 { get { return param10; } }
+    property Parameter clearcoat             { get { return param11; } }
+    // + base_color
+    // + subsurface
+    // + roughness
+    // + anisotropic
+    // + clearcoat_gloss
+    // + sheen_tint
 }
 #endif

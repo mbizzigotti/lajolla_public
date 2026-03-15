@@ -1,4 +1,4 @@
-import shared;
+import Shared;
 import Scene;
 import Utils;
 

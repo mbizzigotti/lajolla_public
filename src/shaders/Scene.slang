@@ -1,4 +1,4 @@
-import shared;
+import Shared;
 import Camera;
 
 [[vk::push_constant]] ConstantBuffer<PerFrameInfo> frame;
@@ -8,7 +8,7 @@ struct Scene
     RWTexture2D<float4>              image;
 	RaytracingAccelerationStructure  AS;
     ConstantBuffer<SceneInfo>        info;
-    StructuredBuffer<Lambertian>     materials;
+    StructuredBuffer<Material>       materials;
     StructuredBuffer<Shape>          shapes;
     ByteAddressBuffer                positions;
     ByteAddressBuffer                triangles;
@@ -22,6 +22,10 @@ struct Scene
 
     func accumulate_sample(uint2 pixel_index, float4 result)
     {
+        if (any(isnan(result)))
+        {
+            result = 0; // Just throw out bad samples
+		}
         if (frame.index == 0)
         {
             image.Store(pixel_index, result);

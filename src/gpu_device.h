@@ -4,7 +4,7 @@
 #define RGFW_VULKAN
 #define NOMINMAX
 #include "3rdparty/RGFW.h"
-#include "shaders/shared.slang"
+#include "shaders/Shared.slang"
 #include <unordered_map>
 
 struct VulkanBuffer {

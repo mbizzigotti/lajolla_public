@@ -1,7 +1,7 @@
-import shared;
+import Shared;
 import Scene;
 import Camera;
-import random;
+import Random;
 import Intersection;
 import Light;
 
@@ -10,95 +10,11 @@ import Frame;
 import Texture;
 import TableDist;
 import Ray;
+import Material;
 
 // ------------------------------------------------------------
 // Ray Generation Shader (Path Tracing)
 // ------------------------------------------------------------
-
-#if 0
-struct MaterialPayload {
-    Material bsdf;
-    PathVertex vertex;
-    float3 dir_in;
-    float pdf;
-    float3 dir_out;
-    float eta;
-    float3 f_or_dir;
-    float roughness;
-};
-
-[shader("callable")]
-void eval_lambertian_bsdf(inout MaterialPayload payload)
-{
-}
-
-[shader("callable")]
-void sample_lambertian_bsdf(inout MaterialPayload payload)
-{
-}
-#endif
-
-#if 1
-struct BSDFSampleRecord
-{
-    float3 dir_out;
-    // The index of refraction ratio. Set to 0 if it's not a transmission event.
-    float eta;
-    float roughness; // Roughness of the selected BRDF layer ([0, 1]).
-};
-float3 eval(in Lambertian bsdf, in PathVertex vertex, float3 dir_in, float3 dir_out)
-{
-    if (dot(vertex.geometric_normal, dir_in) < 0 ||
-        dot(vertex.geometric_normal, dir_out) < 0) {
-        // No light below the surface
-        return 0;
-    }
-    // Sometimes the shading normal can be inconsistent with
-    // the geometry normal. We flip the shading frame in that
-    // case so that we don't produces "black fringes".
-    Frame frame = vertex.shading_frame;
-    if (dot(frame.n, dir_in) < 0) {
-        frame = -frame;
-    }
-
-    return fmax(dot(frame.n, dir_out), 0) *
-           eval(bsdf.reflectance, vertex.uv, vertex.uv_screen_size) / float.getPi();
-}
-float pdf_sample_bsdf(in Lambertian bsdf, in PathVertex vertex, float3 dir_in, float3 dir_out)
-{
-    if (dot(vertex.geometric_normal, dir_in) < 0 ||
-        dot(vertex.geometric_normal, dir_out) < 0) {
-        // No light below the surface
-        return 0;
-    }
-    // Flip the shading frame if it is inconsistent with the geometry normal
-    Frame frame = vertex.shading_frame;
-    if (dot(frame.n, dir_in) < 0) {
-        frame = -frame;
-    }
-
-    // For Lambertian, we importance sample the cosine hemisphere domain.
-    return fmax(dot(frame.n, dir_out), 0) / float.getPi();
-}
-Optional<BSDFSampleRecord> sample_bsdf(in Lambertian bsdf, in PathVertex vertex, float3 dir_in, float2 rnd_param)
-{
-    // For Lambertian, we importance sample the cosine hemisphere domain.
-    if (dot(vertex.geometric_normal, dir_in) < 0) {
-        // Incoming direction is below the surface.
-        return none;
-    }
-    // Flip the shading frame if it is inconsistent with the geometry normal
-    Frame frame = vertex.shading_frame;
-    if (dot(frame.n, dir_in) < 0) {
-        frame = -frame;
-    }
-
-    BSDFSampleRecord record = { to_world(frame, sample_cos_hemisphere(rnd_param)) };
-    record.eta = 0;
-    record.roughness = 1;
-    return record;
-}
-#endif
 
 [shader("raygeneration")]
 void rgen_path_tracing()
@@ -183,7 +99,7 @@ void rgen_path_tracing()
         // our hemisphere sampling.
 
         // Let's implement this!
-        Lambertian mat = scene.materials[vertex.material_id];
+        Material mat = scene.materials[vertex.material_id];
 
         // First, we sample a point on the light source.
         // We do this by first picking a light source, then pick a point on it.
@@ -301,12 +217,8 @@ void rgen_path_tracing()
 
         // Let's do the hemispherical sampling next.
         float3 dir_view = -ray.Direction;
-        float2 bsdf_rnd_param_uv  = rng.next_float2();
-        float bsdf_rnd_param_w = rng.next_float();
-        Optional<BSDFSampleRecord> bsdf_sample_ = sample_bsdf(mat,
-						vertex,
-                        dir_view,
-                        bsdf_rnd_param_uv);
+        float3 bsdf_rnd_param  = rng.next_float3();
+        Optional<BSDFSampleRecord> bsdf_sample_ = sample_bsdf(mat, vertex, dir_view, bsdf_rnd_param);
         if (!bsdf_sample_.hasValue) {
             // BSDF sampling failed. Abort the loop.
             break;

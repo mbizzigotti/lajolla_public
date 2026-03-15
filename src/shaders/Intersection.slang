@@ -1,8 +1,15 @@
-import shared;
+import Shared;
 import Frame;
 import Scene;
 import Ray;
 import Light;
+
+struct BSDFSampleRecord
+{
+    float3 dir_out;
+    float eta;       // The index of refraction ratio. Set to 0 if it's not a transmission event.
+    float roughness; // Roughness of the selected BRDF layer ([0, 1]).
+};
 
 struct PathVertex
 {

@@ -1,5 +1,5 @@
-import shared;
-import random;
+import Shared;
+import Random;
 import Utils;
 
 extension Filter

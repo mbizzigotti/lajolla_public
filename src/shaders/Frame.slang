@@ -58,3 +58,74 @@ float3 to_local(in Frame frame, float3 v)
 {
     return float3(dot(v, frame.x), dot(v, frame.y), dot(v, frame.n));
 }
+
+/// See "Sampling the GGX Distribution of Visible Normals", Heitz, 2018.
+/// https://jcgt.org/published/0007/04/01/
+[ForceInline]
+float3 sample_visible_normals(float3 local_dir_in, float alpha, float2 rnd_param)
+{
+    float factor = 1;
+    // The incoming direction is in the "ellipsodial configuration" in Heitz's paper
+    if (local_dir_in.z < 0) {
+        // Ensure the input is on top of the surface.
+        local_dir_in = -local_dir_in;
+        factor = -1;
+    }
+
+    // Transform the incoming direction to the "hemisphere configuration".
+    float3 hemi_dir_in = normalize(
+        float3(alpha * local_dir_in.x, alpha * local_dir_in.y, local_dir_in.z));
+
+    // Parameterization of the projected area of a hemisphere.
+    // First, sample a disk.
+    float r = sqrt(rnd_param.x);
+    float phi = 2 * float.getPi() * rnd_param.y;
+    float t1 = r * cos(phi);
+    float t2 = r * sin(phi);
+    // Vertically scale the position of a sample to account for the projection.
+    float s = (1 + hemi_dir_in.z) / 2;
+    t2 = (1 - s) * sqrt(1 - t1 * t1) + s * t2;
+    // Point in the disk space
+    float3 disk_N = { t1, t2, sqrt(max(0, 1 - t1 * t1 - t2 * t2)) };
+
+    // Reprojection onto hemisphere -- we get our sampled normal in hemisphere space.
+    Frame hemi_frame = Frame(hemi_dir_in);
+    float3 hemi_N = to_world(hemi_frame, disk_N);
+
+    // Transforming the normal back to the ellipsoid configuration
+    return factor * normalize(float3(alpha * hemi_N.x, alpha * hemi_N.y, max(0, hemi_N.z)));
+}
+
+[ForceInline]
+float3 sample_visible_normals(float3 local_dir_in, float alpha_x, float alpha_y, float2 rnd_param)
+{
+    float factor = 1;
+    // The incoming direction is in the "ellipsodial configuration" in Heitz's paper
+    if (local_dir_in.z < 0) {
+        // Ensure the input is on top of the surface.
+        local_dir_in = -local_dir_in;
+        factor = -1;
+    }
+
+    // Transform the incoming direction to the "hemisphere configuration".
+    float3 hemi_dir_in = normalize(float3(alpha_x * local_dir_in.x, alpha_y * local_dir_in.y, local_dir_in.z));
+
+    // Parameterization of the projected area of a hemisphere.
+    // First, sample a disk.
+    float r = sqrt(rnd_param.x);
+    float phi = 2 * float.getPi() * rnd_param.y;
+    float t1 = r * cos(phi);
+    float t2 = r * sin(phi);
+    // Vertically scale the position of a sample to account for the projection.
+    float s = (1 + hemi_dir_in.z) / 2;
+    t2 = (1 - s) * sqrt(1 - t1 * t1) + s * t2;
+    // Point in the disk space
+    float3 disk_N = {t1, t2, sqrt(max(0, 1 - t1*t1 - t2*t2))};
+
+    // Reprojection onto hemisphere -- we get our sampled normal in hemisphere space.
+    Frame hemi_frame = Frame(hemi_dir_in);
+    float3 hemi_N = to_world(hemi_frame, disk_N);
+
+    // Transforming the normal back to the ellipsoid configuration
+    return factor * normalize(float3(alpha_x * hemi_N.x, alpha_y * hemi_N.y, max(0, hemi_N.z)));
+}
