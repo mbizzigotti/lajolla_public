@@ -412,6 +412,7 @@ struct shape_convert_op {
 		result.exterior_medium_id = shape.exterior_medium_id;
 		result.position = shape.position;
 		result.radius = shape.radius;
+		result.flags = GPU::SHAPE_IS_SPHERE;
 		return result;
 	}
 	GPU::Shape operator()(const TriangleMesh& shape) {
@@ -430,6 +431,47 @@ struct shape_convert_op {
 	}
 	uint32_t& vertex_offset;
 	uint32_t& index_offset;
+};
+
+struct get_shape_geometry_op {
+	VkAccelerationStructureGeometryKHR operator()(const Sphere& shape) {
+		return {
+			.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR,
+			.geometryType = VK_GEOMETRY_TYPE_AABBS_KHR,
+			.geometry = {
+				.aabbs = {
+					.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_AABBS_DATA_KHR,
+					.data = {.deviceAddress = aabb_buffer.device_address + sphere_index * sizeof(VkAabbPositionsKHR)},
+					.stride = sizeof(VkAabbPositionsKHR),
+				}
+			},
+			.flags = VK_GEOMETRY_OPAQUE_BIT_KHR,
+		};
+	}
+	VkAccelerationStructureGeometryKHR operator()(const TriangleMesh& shape) {
+		return {
+			.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR,
+			.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR,
+			.geometry = {
+				.triangles = {
+					.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR,
+					.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT,
+					.vertexData = {.deviceAddress = vertex_buffer.device_address + gpu_shape.vertex_offset * sizeof(Vector3f)},
+					.vertexStride = sizeof(Vector3f),
+					.maxVertex = (uint32_t)shape.positions.size(),
+					.indexType = VK_INDEX_TYPE_UINT32,
+					.indexData = {.deviceAddress = index_buffer.device_address + gpu_shape.index_offset * sizeof(Vector3i)},
+				}
+			},
+			.flags = VK_GEOMETRY_OPAQUE_BIT_KHR,
+		};
+	}
+
+	const VulkanRawBuffer &vertex_buffer;
+	const VulkanRawBuffer &index_buffer;
+	const VulkanRawBuffer &aabb_buffer;
+	const GPU::Shape &gpu_shape;
+	const uint32_t &sphere_index;
 };
 
 struct light_convert_op {
@@ -601,42 +643,42 @@ void GPUDevice::add_texture(const Mipmap3& mipmap)
 
 void GPUDevice::add_shape_data(const Shape& shape)
 {
-	const TriangleMesh& mesh = std::get<TriangleMesh>(shape);
-	vertex_buffer.AddArrayAndConvert<Vector3f>(mesh.positions);
-	index_buffer.AddArray(mesh.indices);
-	if (mesh.uvs.size() > 0) {
-		uv_buffer.AddArrayAndConvert<Vector2f>(mesh.uvs);
+	if (std::holds_alternative<TriangleMesh>(shape))
+	{
+		const TriangleMesh& mesh = std::get<TriangleMesh>(shape);
+		vertex_buffer.AddArrayAndConvert<Vector3f>(mesh.positions);
+		index_buffer.AddArray(mesh.indices);
+		if (mesh.uvs.size() > 0) {
+			uv_buffer.AddArrayAndConvert<Vector2f>(mesh.uvs);
+		}
+		else {
+			uv_buffer.AddZeros<Vector2f>(mesh.positions.size());
+		}
+		if (mesh.normals.size() > 0) {
+			normal_buffer.AddArrayAndConvert<Vector3f>(mesh.normals);
+		}
+		else {
+			normal_buffer.AddZeros<Vector3f>(mesh.positions.size());
+		}
 	}
-	else {
-		uv_buffer.AddZeros<Vector2f>(mesh.positions.size());
-	}
-	if (mesh.normals.size() > 0) {
-		normal_buffer.AddArrayAndConvert<Vector3f>(mesh.normals);
-	}
-	else {
-		normal_buffer.AddZeros<Vector3f>(mesh.positions.size());
+	else if (std::holds_alternative<Sphere>(shape))
+	{
+		const Sphere& sphere = std::get<Sphere>(shape);
+		VkAabbPositionsKHR aabb = {
+			.minX = (float)(sphere.position.x - sphere.radius),
+			.minY = (float)(sphere.position.y - sphere.radius),
+			.minZ = (float)(sphere.position.z - sphere.radius),
+			.maxX = (float)(sphere.position.x + sphere.radius),
+			.maxY = (float)(sphere.position.y + sphere.radius),
+			.maxZ = (float)(sphere.position.z + sphere.radius),
+		};
+		aabb_buffer.Add(aabb);
 	}
 }
 
-void GPUDevice::add_shape(uint32_t index, const GPU::Shape& gpu_shape, const Shape& shape) {
-	const TriangleMesh& mesh = std::get<TriangleMesh>(shape);
-
-	VkAccelerationStructureGeometryKHR geometry = {
-		.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR,
-		.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR,
-		.geometry = {
-			.triangles = {
-				.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR,
-				.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT,
-				.vertexData = {.deviceAddress = vertex_buffer.device_address + gpu_shape.vertex_offset * sizeof(Vector3f)},
-				.vertexStride = sizeof(Vector3f),
-				.maxVertex = (uint32_t)mesh.positions.size(),
-				.indexType = VK_INDEX_TYPE_UINT32,
-				.indexData = {.deviceAddress = index_buffer.device_address + gpu_shape.index_offset * sizeof(Vector3i)},
-			}
-		},
-		.flags = VK_GEOMETRY_OPAQUE_BIT_KHR,
-	};
+void GPUDevice::add_shape(uint32_t index, const GPU::Shape& gpu_shape, const Shape& shape, uint32_t sphere_index) {
+	VkAccelerationStructureGeometryKHR geometry =
+		std::visit(get_shape_geometry_op{ vertex_buffer, index_buffer, aabb_buffer, gpu_shape, sphere_index }, shape);
 
 	VkAccelerationStructureBuildGeometryInfoKHR buildInfo{
 		.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
@@ -646,7 +688,8 @@ void GPUDevice::add_shape(uint32_t index, const GPU::Shape& gpu_shape, const Sha
 		.geometryCount = 1,
 		.pGeometries = &geometry,
 	};
-	uint32_t primitive_count = mesh.indices.size();
+	uint32_t primitive_count = std::holds_alternative<TriangleMesh>(shape)
+		? std::get<TriangleMesh>(shape).indices.size() : 1;
 	VkAccelerationStructureBuildRangeInfoKHR build_range{
 		.primitiveCount = primitive_count,
 	};
@@ -693,7 +736,7 @@ void GPUDevice::add_shape(uint32_t index, const GPU::Shape& gpu_shape, const Sha
 		.transform = { { {1,0,0,0}, {0,1,0,0}, {0,0,1,0} } },
 		.instanceCustomIndex = index,
 		.mask = 0xFF,
-		.instanceShaderBindingTableRecordOffset = 0,
+		.instanceShaderBindingTableRecordOffset = std::holds_alternative<TriangleMesh>(shape) ? 0u : 1u,
 		.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR,
 		.accelerationStructureReference = bas.address,
 	};
@@ -746,7 +789,7 @@ GPU::TableDist2D GPUDevice::add_dist_2d(const TableDist2D& table)
 void GPUDevice::attach(RGFW_window* window, Scene* scene, const std::string &path)
 {
 	QueueFamilyIndices indices;
-	VkPipelineShaderStageCreateInfo stages[4] = {};
+	VkPipelineShaderStageCreateInfo stages[6] = {};
 
 	scene_name = fs::path(path).stem().generic_string();
 
@@ -998,7 +1041,8 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene, const std::string &pat
 		scene_block.add_binding("textures", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, GPU::MAX_TEXTURE_COUNT);
 
 		scene_block.shader_stages = VK_SHADER_STAGE_RAYGEN_BIT_KHR
-			                      | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+			                      | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR
+			                      | VK_SHADER_STAGE_INTERSECTION_BIT_KHR;
 		scene_block.CreateLayout(device);
 
 		VkPushConstantRange push_range = {
@@ -1022,12 +1066,12 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene, const std::string &pat
 		stages[0] = load_shader_stage(VK_SHADER_STAGE_RAYGEN_BIT_KHR, "rgen_path_tracing");
 		stages[1] = load_shader_stage(VK_SHADER_STAGE_MISS_BIT_KHR, "miss");
 		stages[2] = load_shader_stage(VK_SHADER_STAGE_MISS_BIT_KHR, "miss_shadow");
-		stages[3] = load_shader_stage(VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, "chit_tri");
-	//	stages[4] = load_shader_stage(VK_SHADER_STAGE_ANY_HIT_BIT_KHR, "ahit");
+		stages[3] = load_shader_stage(VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, "chit_triangle");
+		stages[4] = load_shader_stage(VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, "chit_sphere");
+		stages[5] = load_shader_stage(VK_SHADER_STAGE_INTERSECTION_BIT_KHR, "ints_sphere");
 	}
 	LOG("Creating Ray Tracing Pipeline...");
 	{
-		// Shader groups: raygen(0), missprimary(1), missshadow(2), hitgroup(3), shadowgroup(4)
 		VkRayTracingShaderGroupCreateInfoKHR groups[] {
 			{
 				.sType              = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR,
@@ -1060,6 +1104,14 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene, const std::string &pat
 				.closestHitShader   = 3,
 				.anyHitShader       = VK_SHADER_UNUSED_KHR,
 				.intersectionShader = VK_SHADER_UNUSED_KHR,
+			},
+			{
+				.sType              = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR,
+				.type               = VK_RAY_TRACING_SHADER_GROUP_TYPE_PROCEDURAL_HIT_GROUP_KHR,
+				.generalShader      = VK_SHADER_UNUSED_KHR,
+				.closestHitShader   = 4,
+				.anyHitShader       = VK_SHADER_UNUSED_KHR,
+				.intersectionShader = 5,
 			},
 		};
 
@@ -1124,16 +1176,21 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene, const std::string &pat
 			vertex_buffer.GetDeviceAddress(device);
 			index_buffer.CreateFromStaging(*this, usage);
 			index_buffer.GetDeviceAddress(device);
+			aabb_buffer.CreateFromStaging(*this, usage);
+			aabb_buffer.GetDeviceAddress(device);
 
 			uv_buffer.CreateFromStaging(*this, usage);
 			normal_buffer.CreateFromStaging(*this, usage);
 		}
 		{
-			uint32_t vertex_offset = 0, index_offset = 0;
+			uint32_t vertex_offset = 0, index_offset = 0, sphere_index = 0;
 			for (uint32_t i = 0; i < scene->shapes.size(); ++i) {
 				const Shape& shape = scene->shapes[i];
 				GPU::Shape gpu_shape = std::visit(shape_convert_op{ vertex_offset, index_offset }, shape);
-				add_shape(i, gpu_shape, shape);
+				add_shape(i, gpu_shape, shape, sphere_index);
+				if (std::holds_alternative<Sphere>(shape)) {
+					sphere_index += 1;
+				}
 			}
 			VkFlags usage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
 						  | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
@@ -1223,7 +1280,7 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene, const std::string &pat
 		uint32_t handleSizeAligned = align(rtprops.shaderGroupHandleSize, rtprops.shaderGroupHandleAlignment);
 		uint32_t baseAlignment = rtprops.shaderGroupBaseAlignment;
 
-		uint32_t groupCount = 4;
+		uint32_t groupCount = 5;
 		std::vector<char> shaderHandleStorage(groupCount * handleSize);
 		vkGetRayTracingShaderGroupHandlesKHR(device, pipeline, 0, groupCount, shaderHandleStorage.size(), shaderHandleStorage.data());
 
@@ -1239,7 +1296,7 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene, const std::string &pat
 
 		rgen_sbt = { .deviceAddress = sbtAddr + 0 * baseAlignment, .stride = baseAlignment, .size = baseAlignment };
 		miss_sbt = { .deviceAddress = sbtAddr + 1 * baseAlignment, .stride = baseAlignment, .size = 2 * baseAlignment };
-		chit_sbt = { .deviceAddress = sbtAddr + 3 * baseAlignment, .stride = baseAlignment, .size = baseAlignment };
+		chit_sbt = { .deviceAddress = sbtAddr + 3 * baseAlignment, .stride = baseAlignment, .size = 2 * baseAlignment };
 	}
 	LOG("Creating Descriptor Sets...");
 	{

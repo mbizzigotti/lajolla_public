@@ -32,19 +32,21 @@ macro(addShaderCompile arg1 arg2)
 	)
 endmacro()
 
-addShaderCompile(rgen_path_tracing PathTracing.slang)
-addShaderCompile(miss Intersection.slang)
-addShaderCompile(miss_shadow Intersection.slang)
-addShaderCompile(chit_tri Intersection.slang)
-addShaderCompile(ahit Intersection.slang)
-addShaderCompile(tonemap Tonemap.slang)
+addShaderCompile(rgen_path_tracing   PathTracing.slang)
+addShaderCompile(miss                Intersection.slang)
+addShaderCompile(miss_shadow         Intersection.slang)
+addShaderCompile(chit_triangle       Intersection.slang)
+addShaderCompile(chit_sphere         Intersection.slang)
+addShaderCompile(ints_sphere         Intersection.slang)
+addShaderCompile(tonemap             Tonemap.slang)
 
 add_custom_target(CompileShaders ALL DEPENDS
 			${CMAKE_BINARY_DIR}/rgen_path_tracing.spv
 			${CMAKE_BINARY_DIR}/miss.spv
 			${CMAKE_BINARY_DIR}/miss_shadow.spv
-			${CMAKE_BINARY_DIR}/chit_tri.spv
-			${CMAKE_BINARY_DIR}/ahit.spv
+			${CMAKE_BINARY_DIR}/chit_triangle.spv
+			${CMAKE_BINARY_DIR}/chit_sphere.spv
+			${CMAKE_BINARY_DIR}/ints_sphere.spv
 			${CMAKE_BINARY_DIR}/tonemap.spv)
 
 include_directories(${EMBREE_INCLUDE_PATH})

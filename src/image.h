@@ -30,6 +30,8 @@ struct Image {
     }
 
     const T &operator()(int x, int y) const {
+        if (x >= width) x = width - 1;
+        if (y >= height) y = height - 1;
         return data[y * width + x];
     }
 

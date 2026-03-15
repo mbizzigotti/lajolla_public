@@ -48,13 +48,19 @@ struct HitPayload
     ShadingInfo shading_info;
     float3 geometric_normal;
     float t_hit;
-    float2 barycentrics;
+    float2 st;
     uint shape_id;
 	int material_id;
 	int area_light_id;
     int interior_medium_id;
     int exterior_medium_id;
     bool hit;
+};
+
+struct SphereHitAttributes
+{
+    float3 normal;
+    float2 uv;
 };
 
 vector<float, N> interpolate<int N>(vector<float, N> a, vector<float, N> b, vector<float, N> c, float2 bary)
@@ -67,14 +73,14 @@ vector<float, N> interpolate<int N>(vector<float, N> a, vector<float, N> b, vect
 // ------------------------------------------------------------
 
 [shader("closesthit")]
-void chit_tri(inout HitPayload payload, in BuiltInTriangleIntersectionAttributes attr)
+void chit_triangle(inout HitPayload payload, in BuiltInTriangleIntersectionAttributes attr)
 {
     uint instance_id = InstanceID();
     uint instance_index = InstanceIndex();
     uint primitive_index = PrimitiveIndex();
 
     payload.shape_id = instance_id;
-    payload.barycentrics = attr.barycentrics;
+    payload.st = attr.barycentrics;
 
     Shape shape = scene.shapes.Load(instance_id);
 
@@ -175,13 +181,155 @@ void chit_tri(inout HitPayload payload, in BuiltInTriangleIntersectionAttributes
     payload.hit = true;
 }
 
+// ------------------------------------------------------------
+// Closest Hit Shader (Sphere)
+// ------------------------------------------------------------
+
+[shader("closesthit")]
+void chit_sphere(inout HitPayload payload, in SphereHitAttributes attr)
+{
+    uint instance_id = InstanceID();
+    payload.shape_id = instance_id;
+    payload.st = attr.uv;
+    
+	Shape shape = scene.shapes.Load(instance_id);
+    payload.material_id = shape.material_id;
+    payload.area_light_id = shape.area_light_id;
+    payload.interior_medium_id = shape.interior_medium_id;
+    payload.exterior_medium_id = shape.exterior_medium_id;
+	
+    // To compute the shading frame, we use the geometry normal as normal,
+    // and dpdu as one of the tangent vector. 
+    // We use the azimuthal angle as u, and the elevation as v, 
+    // thus the point p on sphere and u, v has the following relationship:
+    // p = center + {r * cos(u) * sin(v), r * sin(u) * sin(v), r * cos(v)}
+    // thus dpdu = {-r * sin(u) * sin(v), r * cos(u) * sin(v), 0}
+    //      dpdv = { r * cos(u) * cos(v), r * sin(u) * cos(v), - r * sin(v)}
+    float3 dpdu = {-shape.radius * sin(attr.uv[0]) * sin(attr.uv[1]),
+                    shape.radius * cos(attr.uv[0]) * sin(attr.uv[1]),
+                    0};
+    float3 dpdv = { shape.radius * cos(attr.uv[0]) * cos(attr.uv[1]),
+                    shape.radius * sin(attr.uv[0]) * cos(attr.uv[1]),
+                   -shape.radius * sin(attr.uv[1])};
+    // dpdu may not be orthogonal to shading normal:
+    // subtract the projection of shading_normal onto dpdu to make them orthogonal
+    float3 tangent = normalize(dpdu - attr.normal * dot(attr.normal, dpdu));
+    Frame shading_frame = Frame(tangent, normalize(cross(attr.normal, tangent)), attr.normal);
+	
+    payload.geometric_normal = attr.normal;
+    payload.shading_info = ShadingInfo(shading_frame, attr.uv,
+						1 / shape.radius, /* mean curvature */
+                       (length(dpdu) + length(dpdv)) / 2);
+    payload.t_hit = RayTCurrent();
+    payload.hit = true;
+}
+
+/// Numerically stable quadratic equation solver at^2 + bt + c = 0
+/// See https://people.csail.mit.edu/bkph/articles/Quadratics.pdf
+/// returns false when it can't find solutions.
+bool solve_quadratic(float a, float b, float c, out float t0, out float t1) {
+    t0 = 0;
+    t1 = 0;
+    // Degenerated case
+    if (a == 0) {
+        if (b == 0) {
+            return false;
+        }
+        t0 = -c / b;
+		t1 = -c / b;
+        return true;
+    }
+
+    float discriminant = b * b - 4 * a * c;
+    if (discriminant < 0) {
+        return false;
+    }
+    float root_discriminant = sqrt(discriminant);
+    if (b >= 0) {
+        t0 = (-b - root_discriminant) / (2 * a);
+        t1 = 2 * c / (-b - root_discriminant);
+    } else {
+        t0 = 2 * c / (-b + root_discriminant);
+        t1 = (-b + root_discriminant) / (2 * a);
+    }
+    return true;
+}
+
+[shader("intersection")]
+void ints_sphere()
+{
+    uint instance_id = InstanceID();
+    Shape sphere = scene.shapes.Load(instance_id);
+
+    float3 rayOrigin = WorldRayOrigin();
+    float3 rayDir = WorldRayDirection();
+
+    // Our sphere is ||p - x||^2 = r^2
+    // substitute x = o + d * t, we want to solve for t
+    // ||p - (o + d * t)||^2 = r^2
+    // (p.x - (o.x + d.x * t))^2 + (p.y - (o.y + d.y * t))^2 + (p.z - (o.z + d.z * t))^2 - r^2 = 0
+    // (d.x^2 + d.y^2 + d.z^2) t^2 + 2 * (d.x * (o.x - p.x) + d.y * (o.y - p.y) + d.z * (o.z - p.z)) t +
+    // ((p.x-o.x)^2 + (p.y-o.y)^2 + (p.z-o.z)^2  - r^2) = 0
+    // A t^2 + B t + C
+    float3 v = rayOrigin - sphere.position;
+    float A = dot(rayDir, rayDir);
+    float B = 2 * dot(rayDir, v);
+    float C = dot(v, v) - sphere.radius * sphere.radius;
+    float t0, t1;
+    if (!solve_quadratic(A, B, C, t0, t1)) {
+        // No intersection
+        return;
+    }
+    // This can happen due to numerical inaccuracies
+    if (t0 > t1) {
+        float tmp = t0;
+        t0 = t1;
+        t1 = tmp;
+    }
+
+    float tnear = RayTMin();
+    float tfar = RayTCurrent();
+
+    float t = -1;
+    if (t0 >= tnear && t0 < tfar) {
+        t = t0;
+    }
+    if (t1 >= tnear && t1 < tfar && t < 0) {
+        t = t1;
+    }
+
+    if (t >= tnear && t < tfar) {
+        // Record the intersection
+        SphereHitAttributes attr;
+        float3 p = rayOrigin + t * rayDir;
+        float3 geometric_normal = p - sphere.position;
+        // rtc_hit->Ng doesn't need to be normalized
+        attr.normal = {
+            geometric_normal.x,
+            geometric_normal.y,
+            geometric_normal.z,
+        };
+        // We use the spherical coordinates as uv
+        float3 cartesian = geometric_normal / sphere.radius;
+        // https://en.wikipedia.org/wiki/Spherical_coordinate_system#Cartesian_coordinates
+        // We use the convention that y is up axis.
+        float elevation = acos(clamp(cartesian.y, -1, 1));
+        float azimuth = atan2(cartesian.z, cartesian.x);
+        attr.uv = {
+            azimuth / (2 * float.getPi()),
+            elevation / float.getPi(),
+        };
+		ReportHit(t, 0, attr);
+    }
+}
+
 /// Intersect a ray with a scene. If the ray doesn't hit anything,
 /// returns an invalid optional output.
 Optional<PathVertex> intersect(RayDesc ray, RayDifferential ray_diff = { 0, 0 })
 {
     HitPayload payload;
     payload.hit = false;
-    TraceRay(scene.AS, 0, uint.maxValue, 0, 0, 0, ray, payload);
+    TraceRay(scene.AS, 0, uint.maxValue, 0, 1, 0, ray, payload);
 
     if (!payload.hit) {
         return none;
@@ -189,14 +337,14 @@ Optional<PathVertex> intersect(RayDesc ray, RayDifferential ray_diff = { 0, 0 })
 
     PathVertex vertex;
     vertex.position = ray.Origin + ray.Direction * payload.t_hit;
-    vertex.geometric_normal = normalize(payload.geometric_normal);
+    vertex.geometric_normal = payload.geometric_normal;
     vertex.shape_id = payload.shape_id;
     // vertex.primitive_id = payload.instance_index;
     vertex.area_light_id = payload.area_light_id;
     vertex.material_id = payload.material_id;
     vertex.interior_medium_id = payload.interior_medium_id;
     vertex.exterior_medium_id = payload.exterior_medium_id;
-    vertex.st = payload.barycentrics;
+    vertex.st = payload.st;
     vertex.shading_frame = payload.shading_info.shading_frame;
     vertex.uv = payload.shading_info.uv;
     vertex.mean_curvature = payload.shading_info.mean_curvature;
@@ -236,16 +384,6 @@ void miss(inout HitPayload payload)
 void miss_shadow(inout ShadowPayload payload)
 {
     payload.hit = false;
-}
-
-// ------------------------------------------------------------
-// Any Hit Shader
-// ------------------------------------------------------------
-
-[shader("anyhit")]
-void ahit(inout ShadowPayload payload)
-{
-    payload.hit = true;
 }
 
 /// Test is a ray segment intersect with anything in a scene.

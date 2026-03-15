@@ -236,6 +236,7 @@ struct GPUDevice {
 	VulkanRawBuffer                 info_buffer{};
 	VulkanRawBuffer                 material_buffer{};
 	VulkanRawBuffer                 shape_buffer{};
+	VulkanRawBuffer                 aabb_buffer{};
 	VulkanRawBuffer                 vertex_buffer{};
 	VulkanRawBuffer                 index_buffer{};
 	VulkanRawBuffer                 uv_buffer{};
@@ -262,7 +263,7 @@ struct GPUDevice {
 
 	void add_texture(const Mipmap3& texture);
 	void add_shape_data(const Shape &shape);
-	void add_shape(uint32_t index, const GPU::Shape& gpu_shape, const Shape &shape);
+	void add_shape(uint32_t index, const GPU::Shape& gpu_shape, const Shape &shape, uint32_t sphere_index);
 	GPU::TableDist1D add_dist_1d(const TableDist1D& table);
 	GPU::TableDist2D add_dist_2d(const TableDist2D& table);
 	VkPipelineShaderStageCreateInfo load_shader_stage(VkFlags stage, const char* name);

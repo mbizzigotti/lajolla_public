@@ -50,25 +50,31 @@ auto get_sigma_t(const Medium &medium, const Vector3 &p) {
 Spectrum vol_path_tracing_1(const Scene &scene,
                             int x, int y, /* pixel coordinates */
                             pcg32_state &rng) {
-    Ray ray = sample_primary(scene.camera, x, y, rng);
+    int w = scene.camera.width, h = scene.camera.height;
+    Vector2 screen_pos((x + next_pcg32_real<Real>(rng)) / w,
+        (y + next_pcg32_real<Real>(rng)) / h);
+    Ray ray = sample_primary(scene.camera, screen_pos);
+    RayDifferential ray_diff = RayDifferential{ Real(0), Real(0) };
+    int current_medium_id = scene.camera.medium_id;
 
-    std::optional<PathVertex> vertex_ = intersect(scene, ray, {});
-    if (!vertex_) {
-        return make_const_spectrum(0);
+    std::optional<PathVertex> vertex_ = intersect(scene, ray, ray_diff);
+    if (vertex_) {
+        const PathVertex vertex = *vertex_;
+        if (is_light(scene.shapes[vertex.shape_id])) {
+            Spectrum transmittance = make_const_spectrum(1);
+            if (current_medium_id >= 0) {
+                const Medium& medium = scene.media[current_medium_id];
+                Vector3 p = ray.org;
+                Spectrum sigma_a = get_sigma_a(medium, p);
+                Spectrum sigma_s = get_sigma_s(medium, p);
+                Spectrum sigma_t = sigma_s + sigma_a;
+                Real t = distance(ray.org, vertex.position);
+                transmittance = exp(-sigma_t * t);
+            }
+            return transmittance * emission(vertex, -ray.dir, scene);
+        }
     }
-    PathVertex& vertex = *vertex_;
-
-    const Medium &medium = scene.media[scene.camera.medium_id];
-
-    Real t = distance(ray.org, vertex.position);
-    Real sigma_a = get_sigma_a(medium, {}).x;
-    Real transmittance = exp(-sigma_a * t);
-
-    Spectrum Le = make_zero_spectrum();
-    if (is_light(scene.shapes[vertex.shape_id])) {
-        Le = emission(vertex, -ray.dir, scene);
-    }
-    return transmittance * Le;
+    return make_zero_spectrum();
 }
 
 // The second simplest volumetric renderer: 

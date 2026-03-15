@@ -3,6 +3,7 @@ import Utils;
 import Scene;
 import TableDist;
 import Texture;
+import Frame;
 
 struct PointAndNormal
 {
@@ -125,6 +126,55 @@ PointAndNormal sample_point_on_triangle_mesh(in TableDist1D triangle_sampler, in
     return { v0 + (e1 * b1) + (e2 * b2), geometric_normal };
 }
 
+PointAndNormal sample_point_on_sphere(float3 center, float r, float3 ref_point, float3 rnd_param)
+{
+    // https://www.pbr-book.org/3ed-2018/Light_Transport_I_Surface_Reflection/Sampling_Light_Sources#x2-SamplingSpheres
+
+    if (distance_squared(ref_point, center) < r * r) {
+        // If the reference point is inside the sphere, just sample the whole sphere uniformly
+        float z = 1 - 2 * rnd_param.x;
+        float r_ = sqrt(fmax(0, 1 - z * z));
+        float phi = 2 * float.getPi() * rnd_param.y;
+        float3 offset = float3(r_ * cos(phi), r_ * sin(phi), z);
+        float3 position = center + r * offset;
+        float3 normal = offset;
+        return PointAndNormal(position, normal);
+    }
+
+    // Otherwise sample a ray inside a cone towards the sphere center.
+
+    // Build a coordinate system with n pointing towards the sphere
+    float3 dir_to_center = normalize(center - ref_point);
+    Frame frame = Frame(dir_to_center);
+
+    // These are not exactly "elevation" and "azimuth": elevation here
+    // stands for the extended angle of the cone, and azimuth here stands
+    // for the polar coordinate angle on the substended disk.
+    // I just don't like the theta/phi naming convention...
+    float sin_elevation_max_sq = r * r / distance_squared(ref_point, center);
+    float cos_elevation_max = sqrt(max(0, 1 - sin_elevation_max_sq));
+    // Uniformly interpolate between 1 (angle 0) and max
+    float cos_elevation = (1 - rnd_param[0]) + rnd_param[0] * cos_elevation_max;
+    float sin_elevation = sqrt(max(0, 1 - cos_elevation * cos_elevation));
+    float azimuth = rnd_param[1] * 2 * float.getPi();
+
+    // Now we have a ray direction and a sphere, we can just ray trace and find
+    // the intersection point. Pbrt uses an more clever and numerically robust
+    // approach which I will just shamelessly copy here.
+    float dc = distance(ref_point, center);
+    float ds = dc * cos_elevation -
+              sqrt(max(0, r * r - dc * dc * sin_elevation * sin_elevation));
+    float cos_alpha = (dc * dc + r * r - ds * ds) / (2 * dc * r);
+    float sin_alpha = sqrt(max(0, 1 - cos_alpha * cos_alpha));
+    // Add negative sign since normals point outwards.
+    float3 n_on_sphere = -to_world(frame,
+                                    float3(sin_alpha * cos(azimuth),
+                                           sin_alpha * sin(azimuth),
+                                           cos_alpha));
+    float3 p_on_sphere = r * n_on_sphere + center;
+    return PointAndNormal(p_on_sphere, n_on_sphere);
+}
+
 /// Given some random numbers and a reference point, sample a point on the light source.
 /// If the point is on a surface, returns both the point & normal on it.
 /// If the point is infinitely far away (e.g., on an environment map),
@@ -136,9 +186,36 @@ PointAndNormal sample_point_on_light(in Light light, float3 ref_point, float3 rn
     if (is_envmap(light)) {
         return sample_point_on_envmap(rnd_param);
 	}
-	// TODO sphere sampling
 	Shape shape = scene.shapes[light.shape_id];
-	return sample_point_on_triangle_mesh(light.triangle_sampler, shape, ref_point, rnd_param);
+    if (bool(shape.flags & SHAPE_IS_SPHERE))
+    {
+        return sample_point_on_sphere(shape.position, shape.radius, ref_point, rnd_param);
+	}
+    else
+    {
+		return sample_point_on_triangle_mesh(light.triangle_sampler, shape, ref_point, rnd_param);
+	}
+}
+
+float pdf_point_on_sphere(float3 center, float r, PointAndNormal point_on_shape, float3 ref_point)
+{
+    // https://www.pbr-book.org/3ed-2018/Light_Transport_I_Surface_Reflection/Sampling_Light_Sources#x2-SamplingSpheres
+
+    if (distance_squared(ref_point, center) < r * r) {
+        // If the reference point is inside the sphere, just sample the whole sphere uniformly
+        return 1 / (4 * float.getPi() * r * r);
+    }
+    
+    float sin_elevation_max_sq = r * r / distance_squared(ref_point, center);
+    float cos_elevation_max = sqrt(max(0, 1 - sin_elevation_max_sq));
+    // Uniform sampling PDF of a cone.
+    float pdf_solid_angle = 1 / (2 * float.getPi() * (1 - cos_elevation_max));
+    // Convert it back to area measure
+    float3 p_on_sphere = point_on_shape.position;
+    float3 n_on_sphere = point_on_shape.normal;
+    float3 dir = normalize(p_on_sphere - ref_point);
+    return pdf_solid_angle * fabs(dot(n_on_sphere, dir)) /
+        distance_squared(ref_point, p_on_sphere);
 }
 
 /// Given a point on the light source and a reference point,
@@ -147,7 +224,12 @@ float pdf_point_on_light(in Light light, PointAndNormal point_on_light, float3 r
 {
     if (is_envmap(light)) {
         return pdf_point_on_envmap(point_on_light);
-	}
+    }
+    Shape shape = scene.shapes[light.shape_id];
+    if (bool(shape.flags & SHAPE_IS_SPHERE))
+    {
+        return pdf_point_on_sphere(shape.position, shape.radius, point_on_light, ref_point);
+    }
     return 1.0 / light.surface_area;
 }
 
