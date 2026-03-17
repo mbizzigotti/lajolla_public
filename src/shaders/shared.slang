@@ -7,6 +7,7 @@ using int4 = TVector4<int>;
 using uint4 = TVector4<uint32_t>;
 using float2 = TVector2<float>;
 using float3 = TVector3<float>;
+using float4 = TVector4<float>;
 using float4x4 = TMatrix4x4<float>;
 #define interface struct
 
@@ -15,7 +16,7 @@ namespace GPU {
 
 struct PerFrameInfo
 {
-	uint index;
+    uint index;
 };
 
 struct BSphere
@@ -29,7 +30,7 @@ struct Options
     int max_depth;
     int rr_depth;
     int max_null_collisions;
-    int _padding;
+    int vol_path_version;
 };
 
 enum FilterType : uint
@@ -166,6 +167,39 @@ struct Material
     float2 _padding;
     float eta;
     MaterialType type;
+};
+
+enum class PhaseFunctionType
+{
+    Isotropic,
+    HenyeyGreenstein,
+};
+
+struct PhaseFunction
+{
+    float3 param;
+    PhaseFunctionType type;
+};
+
+struct Volume
+{
+    int3 resolution;
+    int index;
+    float3 p_min;
+    float scale;
+    float3 max_data;
+    float _padding0;
+    float3 p_max;
+    float _padding1;
+};
+
+struct Medium
+{
+    PhaseFunction phase_function;
+    Volume albedo;
+    Volume density;
+    int3 _padding;
+	int is_heterogenious;
 };
 
 #ifdef __cplusplus

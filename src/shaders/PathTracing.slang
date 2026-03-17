@@ -4,11 +4,7 @@ import Camera;
 import Random;
 import Intersection;
 import Light;
-
 import Utils;
-import Frame;
-import Texture;
-import TableDist;
 import Ray;
 import Material;
 

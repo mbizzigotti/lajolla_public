@@ -19,6 +19,11 @@ func max_comp(float3 v) -> float
 }
 
 [ForceInline]
+T average<T: IArithmetic>(vector<T,3> v) {
+    return (v.x + v.y + v.z) / T(3);
+}
+
+[ForceInline]
 func safe_sqrt(float x) -> float
 {
     return sqrt(x);

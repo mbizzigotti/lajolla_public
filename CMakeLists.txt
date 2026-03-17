@@ -26,22 +26,25 @@ file(GLOB SHADER_SOURCE "${SHADER_SOURCE_DIR}/*.slang")
 macro(addShaderCompile arg1 arg2)
 	add_custom_command(
 		OUTPUT ${arg1}.spv
-		COMMAND ${SLANGC_EXECUTABLE} ${SHADER_SOURCE_DIR}/${arg2} -O3 -target spirv -entry ${arg1} -o ${CMAKE_BINARY_DIR}/${arg1}.spv
+		COMMAND ${SLANGC_EXECUTABLE} ${SHADER_SOURCE_DIR}/${arg2} -target spirv -entry ${arg1} -o ${CMAKE_BINARY_DIR}/${arg1}.spv
 		DEPENDS ${SHADER_SOURCE}
 		COMMENT ${arg1}.spv
 	)
 endmacro()
 
-addShaderCompile(rgen_path_tracing   PathTracing.slang)
-addShaderCompile(miss                Intersection.slang)
-addShaderCompile(miss_shadow         Intersection.slang)
-addShaderCompile(chit_triangle       Intersection.slang)
-addShaderCompile(chit_sphere         Intersection.slang)
-addShaderCompile(ints_sphere         Intersection.slang)
-addShaderCompile(tonemap             Tonemap.slang)
+addShaderCompile(miss           Intersection.slang)
+addShaderCompile(miss_shadow    Intersection.slang)
+addShaderCompile(chit_triangle  Intersection.slang)
+addShaderCompile(chit_sphere    Intersection.slang)
+addShaderCompile(ints_sphere    Intersection.slang)
+addShaderCompile(tonemap        Tonemap.slang)
+
+addShaderCompile(rgen_path_tracing       PathTracing.slang)
+addShaderCompile(rgen_vol_path_tracing   VolPathTracing.slang)
 
 add_custom_target(CompileShaders ALL DEPENDS
 			${CMAKE_BINARY_DIR}/rgen_path_tracing.spv
+			${CMAKE_BINARY_DIR}/rgen_vol_path_tracing.spv
 			${CMAKE_BINARY_DIR}/miss.spv
 			${CMAKE_BINARY_DIR}/miss_shadow.spv
 			${CMAKE_BINARY_DIR}/chit_triangle.spv

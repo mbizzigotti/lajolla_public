@@ -214,8 +214,12 @@ float pdf_point_on_sphere(float3 center, float r, PointAndNormal point_on_shape,
     float3 p_on_sphere = point_on_shape.position;
     float3 n_on_sphere = point_on_shape.normal;
     float3 dir = normalize(p_on_sphere - ref_point);
-    return pdf_solid_angle * fabs(dot(n_on_sphere, dir)) /
-        distance_squared(ref_point, p_on_sphere);
+    float pdf = pdf_solid_angle * fabs(dot(n_on_sphere, dir)) /
+                distance_squared(ref_point, p_on_sphere);
+    if (isnan(pdf)) {
+        printf("[%f][%v3f] [%v3f][%v3f]", fabs(dot(n_on_sphere, dir)), dir, p_on_sphere, ref_point);
+    }
+    return pdf;
 }
 
 /// Given a point on the light source and a reference point,

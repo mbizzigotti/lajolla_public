@@ -17,6 +17,8 @@ struct HomogeneousMedium : public MediumBase {
 
 struct HeterogeneousMedium : public MediumBase {
     VolumeSpectrum albedo, density;
+    int albedo_volume_id = -1;
+    int density_volume_id = -1;
 };
 
 using Medium = std::variant<HomogeneousMedium, HeterogeneousMedium>;

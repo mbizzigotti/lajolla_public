@@ -498,6 +498,59 @@ struct light_convert_op {
 	const Scene& scene;
 };
 
+struct phase_function_convert_op {
+	GPU::PhaseFunction operator()(const IsotropicPhase& p) const {
+		GPU::PhaseFunction result = {};
+		result.type = GPU::PhaseFunctionType::Isotropic;
+		return result;
+	}
+	GPU::PhaseFunction operator()(const HenyeyGreenstein& p) const {
+		GPU::PhaseFunction result = {};
+		result.type = GPU::PhaseFunctionType::HenyeyGreenstein;
+		result.param.x = p.g;
+		return result;
+	}
+};
+
+template <typename T>
+struct volume_convert_op {
+	GPU::Volume operator()(const ConstantVolume<T>& volume) const {
+		GPU::Volume result = {};
+		result.index = -1;
+		result.max_data = Vector3f(volume.value);
+		return result;
+	}
+	GPU::Volume operator()(const GridVolume<T>& volume) const {
+		GPU::Volume result = {};
+		result.max_data = Vector3f(volume.max_data * volume.scale);
+		result.index = volume_id;
+		result.p_min = Vector3f(volume.p_min);
+		result.p_max = Vector3f(volume.p_max);
+		result.resolution = volume.resolution;
+		result.scale = (float)(volume.scale);
+		return result;
+	}
+	int volume_id;
+};
+
+struct medium_convert_op {
+	GPU::Medium operator()(const HomogeneousMedium& m) const {
+		GPU::Medium result = {};
+		result.albedo  = GPU::Volume{ .max_data = Vector3f(m.sigma_a) };
+		result.density = GPU::Volume{ .max_data = Vector3f(m.sigma_s) };
+		result.phase_function = std::visit(phase_function_convert_op{}, m.phase_function);
+		return result;
+	}
+	GPU::Medium operator()(const HeterogeneousMedium& m) const {
+		GPU::Medium result;
+		result.albedo = std::visit(volume_convert_op<Spectrum>{m.albedo_volume_id}, m.albedo);
+		result.density = std::visit(volume_convert_op<Spectrum>{m.density_volume_id}, m.density);
+		result.phase_function = std::visit(phase_function_convert_op{}, m.phase_function);
+		result.is_heterogenious = 1;
+		return result;
+	}
+};
+
 GPU::EnvironmentMap convert(GPUDevice& gpu, const Envmap& envmap)
 {
 	GPU::EnvironmentMap result = {};
@@ -639,6 +692,51 @@ void GPUDevice::add_texture(const Mipmap3& mipmap)
 	}
 
 	textures.emplace_back(texture);
+}
+
+int GPUDevice::add_volume(const GridVolume<Spectrum>& volume)
+{
+	VkFormat format = VK_FORMAT_R32G32B32A32_SFLOAT;
+	VulkanImage texture{};
+	VkImageCreateInfo image_info = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+		.imageType = VK_IMAGE_TYPE_3D,
+		.format = format,
+		.extent = {
+			(uint32_t)(volume.resolution.x),
+			(uint32_t)(volume.resolution.y),
+			(uint32_t)(volume.resolution.z)
+		},
+		.mipLevels = 1,
+		.arrayLayers = 1,
+		.samples = VK_SAMPLE_COUNT_1_BIT,
+		.tiling = VK_IMAGE_TILING_OPTIMAL,
+		.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+	};
+	assert(vkCreateImage(device, &image_info, nullptr, &texture.image) == VK_SUCCESS);
+
+	VkMemoryRequirements memReq;
+	vkGetImageMemoryRequirements(device, texture.image, &memReq);
+
+	VkMemoryAllocateInfo ainfo{ VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+	ainfo.allocationSize = memReq.size;
+	ainfo.memoryTypeIndex = find_memory_type(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	vkAllocateMemory(device, &ainfo, nullptr, &texture.memory);
+	vkBindImageMemory(device, texture.image, texture.memory, 0);
+
+	VkImageViewCreateInfo siv{}; siv.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+	siv.image = texture.image; siv.viewType = VK_IMAGE_VIEW_TYPE_3D; siv.format = format;
+	siv.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; siv.subresourceRange.baseMipLevel = 0;
+	siv.subresourceRange.levelCount = image_info.mipLevels;
+	siv.subresourceRange.baseArrayLayer = 0; siv.subresourceRange.layerCount = 1;
+	vkCreateImageView(device, &siv, nullptr, &texture.view);
+
+	write_volume(texture.image, volume, format, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+	int index = (int)std::size(volumes);
+	volumes.emplace_back(texture);
+	return index;
 }
 
 void GPUDevice::add_shape_data(const Shape& shape)
@@ -1037,8 +1135,11 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene, const std::string &pat
 		scene_block.add_binding("light",    VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 		scene_block.add_binding("tex",      VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 		scene_block.add_binding("dist",     VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-		scene_block.add_binding("sampler",  VK_DESCRIPTOR_TYPE_SAMPLER);
+		scene_block.add_binding("media",    VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+		scene_block.add_binding("tsamp",    VK_DESCRIPTOR_TYPE_SAMPLER);
 		scene_block.add_binding("textures", VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, GPU::MAX_TEXTURE_COUNT);
+		scene_block.add_binding("vsamp",    VK_DESCRIPTOR_TYPE_SAMPLER);
+		scene_block.add_binding("volumes",  VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, GPU::MAX_TEXTURE_COUNT);
 
 		scene_block.shader_stages = VK_SHADER_STAGE_RAYGEN_BIT_KHR
 			                      | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR
@@ -1063,7 +1164,12 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene, const std::string &pat
 	}
 	LOG("Loading Shaders...");
 	{
-		stages[0] = load_shader_stage(VK_SHADER_STAGE_RAYGEN_BIT_KHR, "rgen_path_tracing");
+		// Pick integration shader to use
+		if (scene->options.integrator == Integrator::Path)
+			stages[0] = load_shader_stage(VK_SHADER_STAGE_RAYGEN_BIT_KHR, "rgen_path_tracing");
+		else if (scene->options.integrator == Integrator::VolPath)
+			stages[0] = load_shader_stage(VK_SHADER_STAGE_RAYGEN_BIT_KHR, "rgen_vol_path_tracing");
+
 		stages[1] = load_shader_stage(VK_SHADER_STAGE_MISS_BIT_KHR, "miss");
 		stages[2] = load_shader_stage(VK_SHADER_STAGE_MISS_BIT_KHR, "miss_shadow");
 		stages[3] = load_shader_stage(VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, "chit_triangle");
@@ -1126,7 +1232,7 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene, const std::string &pat
 		};
 		assert(vkCreateRayTracingPipelinesKHR(device, 0, 0, 1, &pipeline_info, nullptr, &pipeline) == VK_SUCCESS);
 	}
-	LOG("Create Sampler...");
+	LOG("Create Samplers...");
 	{
 		VkSamplerCreateInfo sampler_info = {
 			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
@@ -1137,13 +1243,34 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene, const std::string &pat
 			.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
 		};
 		assert(vkCreateSampler(device, &sampler_info, 0, &sampler) == VK_SUCCESS);
+
+		sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+		sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+		sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+		assert(vkCreateSampler(device, &sampler_info, 0, &volume_sampler) == VK_SUCCESS);
 	}
-	LOG("Creating Constant Buffers...");
+	LOG("Creating Scene Buffers...");
 	{
 		GPU::SceneInfo scene_info = {};
 		{
 			for (const Mipmap3& texture : scene->texture_pool.image3s) {
 				add_texture(texture);
+			}
+			for (Medium &medium: (std::vector<Medium>&)scene->media) {
+				if (!std::holds_alternative<HeterogeneousMedium>(medium))
+					continue;
+
+				auto& m = std::get<HeterogeneousMedium>(medium);
+				using Volume = GridVolume<Spectrum>;
+
+				if (std::holds_alternative<Volume>(m.albedo))
+				{
+					m.albedo_volume_id = add_volume(std::get<Volume>(m.albedo));
+				}
+				if (std::holds_alternative<Volume>(m.density))
+				{
+					m.density_volume_id = add_volume(std::get<Volume>(m.density));
+				}
 			}
 
 			if (scene->envmap_light_id != -1) {
@@ -1208,6 +1335,12 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene, const std::string &pat
 			dist_buffer.CreateFromStaging(*this, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
 		}
 		{
+			for (const Medium &medium : scene->media) {
+				media_buffer.Add(std::visit(medium_convert_op{}, medium));
+			}
+			media_buffer.CreateFromStaging(*this, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+		}
+		{
 			scene_info.camera = convert(scene->camera);
 			scene_info.bounds.center = scene->bounds.center;
 			scene_info.bounds.radius = scene->bounds.radius;
@@ -1215,13 +1348,10 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene, const std::string &pat
 			scene_info.options.rr_depth = scene->options.rr_depth;
 			scene_info.options.max_null_collisions = scene->options.max_null_collisions;
 			scene_info.envmap.light_id = scene->envmap_light_id;
+			scene_info.options.vol_path_version = scene->options.vol_path_version;
 			info_buffer.Add(scene_info);
 			info_buffer.CreateFromStaging(*this, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
 		}
-	}
-	LOG("Creating Textures...");
-	{
-		printf("how");
 	}
 	LOG("Creating Acceleration Structures...");
 	{
@@ -1308,7 +1438,7 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene, const std::string &pat
 			{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,              16 },
 			{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,             16 },
 			{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,             16 },
-			{ VK_DESCRIPTOR_TYPE_SAMPLER,                     1 },
+			{ VK_DESCRIPTOR_TYPE_SAMPLER,                     4 },
 		};
 		VkDescriptorPoolCreateInfo pool_info {
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
@@ -1321,14 +1451,21 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene, const std::string &pat
 
 		scene_block.Allocate(device, descriptor_pool);
 
-		std::vector<VkDescriptorImageInfo> image_infos;
+		std::vector<VkDescriptorImageInfo> texture_infos;
 		for (VulkanImage& image : textures) {
-			image_infos.emplace_back(VkDescriptorImageInfo{
+			texture_infos.emplace_back(VkDescriptorImageInfo{
 				.imageView = image.view,
 				.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 			});
 		}
-		VkWriteDescriptorSet writes[] = {
+		std::vector<VkDescriptorImageInfo> volume_infos;
+		for (VulkanImage& image : volumes) {
+			volume_infos.emplace_back(VkDescriptorImageInfo{
+				.imageView = image.view,
+				.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			});
+		}
+		std::vector<VkWriteDescriptorSet> writes = {
 			scene_block.write("image",    storage_view),
 			scene_block.write("as",       &tas.handle),
 			scene_block.write("info",     info_buffer),
@@ -1341,10 +1478,15 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene, const std::string &pat
 			scene_block.write("light",    light_buffer),
 			scene_block.write("tex",      texture_buffer),
 			scene_block.write("dist",     dist_buffer),
-			scene_block.write("sampler",  sampler),
-			scene_block.write_many("textures", image_infos.data(), image_infos.size()),
+			scene_block.write("media",    media_buffer),
+			scene_block.write("tsamp",    sampler),
+			scene_block.write("vsamp",    volume_sampler),
 		};
-		vkUpdateDescriptorSets(device, (uint32_t)std::size(writes), writes, 0, 0);
+		if (texture_infos.size() > 0)
+			writes.emplace_back(scene_block.write_many("textures", texture_infos.data(), texture_infos.size()));
+		if (volume_infos.size() > 0)
+			writes.emplace_back(scene_block.write_many("volumes", volume_infos.data(), volume_infos.size()));
+		vkUpdateDescriptorSets(device, (uint32_t)writes.size(), writes.data(), 0, 0);
 	}
 	LOG("Creating Render Pass...");
 	{
@@ -1629,7 +1771,7 @@ void VulkanAccelerationStructure::Destroy(struct GPUDevice& gpu)
 
 void VulkanRawBuffer::GetDeviceAddress(VkDevice device)
 {
-	device_address = get_buffer_device_address(device, buffer);
+	if (buffer) device_address = get_buffer_device_address(device, buffer);
 }
 
 void VulkanBuffer::Destroy(VkDevice device)
@@ -1681,6 +1823,170 @@ void Tonemapper::Tonemap(VkCommandBuffer cmd, uint32_t width, uint32_t height)
 	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, 1, &block.descriptor_set, 0, 0);
 	vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(float), &exposure);
 	vkCmdDispatch(cmd, ceil_div(width, 8u), ceil_div(height, 8u), 1);
+}
+
+void GPUDevice::write_image(VkImage dstImage, const Image3& source, VkFormat format, VkImageLayout outLayout, int level)
+{
+	VkDeviceSize  data_size = source.width * source.height * format_size(format);
+	VulkanBuffer staging{};
+
+	// 2. Copy Image Data to Staging Buffer
+	{
+		createBuffer(data_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, staging.buffer, staging.memory);
+		Vector4f* data;
+		vkMapMemory(device, staging.memory, 0, data_size, 0, (void**)&data);
+		int pixel_count = source.width * source.height;
+		for (int i = 0; i < pixel_count; ++i) {
+			Vector3f color = source(i);
+			data[i] = Vector4f(color.x, color.y, color.z, 1.0f);
+		}
+		vkUnmapMemory(device, staging.memory);
+	}
+
+	// 3. Allocate and Begin writing to a Command Buffer for Transfer operations
+	VkCommandBuffer cmd;
+	VkCommandBufferAllocateInfo commandBufferInfo{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+	commandBufferInfo.commandBufferCount = 1;
+	commandBufferInfo.commandPool = command_pool;
+	commandBufferInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+	vkAllocateCommandBuffers(device, &commandBufferInfo, &cmd);
+	{
+		VkCommandBufferBeginInfo beginInfo{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+		beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+		vkBeginCommandBuffer(cmd, &beginInfo);
+
+		// 4. Set Image Layout for transfer
+		VkImageSubresourceRange range;
+		range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		range.baseMipLevel = level;
+		range.levelCount = 1;
+		range.baseArrayLayer = 0;
+		range.layerCount = 1;
+		VkImageMemoryBarrier imageBarrier_toTransfer = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+		imageBarrier_toTransfer.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		imageBarrier_toTransfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+		imageBarrier_toTransfer.image = dstImage;
+		imageBarrier_toTransfer.subresourceRange = range;
+		imageBarrier_toTransfer.srcAccessMask = 0;
+		imageBarrier_toTransfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &imageBarrier_toTransfer);
+
+		// 5. Copy from Staging Buffer to Destination Image
+		VkBufferImageCopy copyRegion{};
+		copyRegion.bufferOffset = 0;
+		copyRegion.bufferRowLength = 0;
+		copyRegion.bufferImageHeight = 0;
+		copyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		copyRegion.imageSubresource.mipLevel = level;
+		copyRegion.imageSubresource.baseArrayLayer = 0;
+		copyRegion.imageSubresource.layerCount = 1;
+		copyRegion.imageExtent = { (uint32_t)(source.width), (uint32_t)(source.height), 1 };
+		vkCmdCopyBufferToImage(cmd, staging.buffer, dstImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+
+		// 6. Set Image Layout to the Output Layout
+		VkImageMemoryBarrier imageBarrier_toReadable{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+		imageBarrier_toReadable.image = dstImage;
+		imageBarrier_toReadable.subresourceRange = range;
+		imageBarrier_toReadable.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+		imageBarrier_toReadable.newLayout = outLayout;
+		imageBarrier_toReadable.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		imageBarrier_toReadable.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+		vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &imageBarrier_toReadable);
+		vkEndCommandBuffer(cmd);
+
+		// 7. Sumbit commands to GPU and wait for them to complete
+		VkSubmitInfo submitInfo{ VK_STRUCTURE_TYPE_SUBMIT_INFO };
+		submitInfo.commandBufferCount = 1;
+		submitInfo.pCommandBuffers = &cmd;
+		vkQueueSubmit(graphics_queue, 1, &submitInfo, VK_NULL_HANDLE);
+		vkQueueWaitIdle(graphics_queue);
+		staging.Destroy(device);
+	}
+	vkFreeCommandBuffers(device, command_pool, 1, &cmd);
+}
+
+void GPUDevice::write_volume(VkImage dstImage, const GridVolume<Spectrum>& source, VkFormat format, VkImageLayout outLayout)
+{
+	VkDeviceSize  data_size = source.resolution.x * source.resolution.y * source.resolution.z * format_size(format);
+	VulkanBuffer staging{};
+
+	// 2. Copy Image Data to Staging Buffer
+	{
+		createBuffer(data_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, staging.buffer, staging.memory);
+		Vector4f* data;
+		vkMapMemory(device, staging.memory, 0, data_size, 0, (void**)&data);
+		int pixel_count = source.resolution.x * source.resolution.y * source.resolution.z;
+		for (int i = 0; i < pixel_count; ++i) {
+			Vector3f color = source.data[i];
+			data[i] = Vector4f(color.x, color.y, color.z, 1.0f);
+		}
+		vkUnmapMemory(device, staging.memory);
+	}
+
+	// 3. Allocate and Begin writing to a Command Buffer for Transfer operations
+	VkCommandBuffer cmd;
+	VkCommandBufferAllocateInfo commandBufferInfo{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+	commandBufferInfo.commandBufferCount = 1;
+	commandBufferInfo.commandPool = command_pool;
+	commandBufferInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+	vkAllocateCommandBuffers(device, &commandBufferInfo, &cmd);
+	{
+		VkCommandBufferBeginInfo beginInfo{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+		beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+		vkBeginCommandBuffer(cmd, &beginInfo);
+
+		// 4. Set Image Layout for transfer
+		VkImageSubresourceRange range;
+		range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		range.baseMipLevel = 0;
+		range.levelCount = 1;
+		range.baseArrayLayer = 0;
+		range.layerCount = 1;
+		VkImageMemoryBarrier imageBarrier_toTransfer = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+		imageBarrier_toTransfer.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		imageBarrier_toTransfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+		imageBarrier_toTransfer.image = dstImage;
+		imageBarrier_toTransfer.subresourceRange = range;
+		imageBarrier_toTransfer.srcAccessMask = 0;
+		imageBarrier_toTransfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &imageBarrier_toTransfer);
+
+		// 5. Copy from Staging Buffer to Destination Image
+		VkBufferImageCopy copyRegion{};
+		copyRegion.bufferOffset = 0;
+		copyRegion.bufferRowLength = 0;
+		copyRegion.bufferImageHeight = 0;
+		copyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		copyRegion.imageSubresource.mipLevel = 0;
+		copyRegion.imageSubresource.baseArrayLayer = 0;
+		copyRegion.imageSubresource.layerCount = 1;
+		copyRegion.imageExtent = {
+			(uint32_t)(source.resolution.x),
+			(uint32_t)(source.resolution.y),
+			(uint32_t)(source.resolution.z)
+		};
+		vkCmdCopyBufferToImage(cmd, staging.buffer, dstImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+
+		// 6. Set Image Layout to the Output Layout
+		VkImageMemoryBarrier imageBarrier_toReadable{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+		imageBarrier_toReadable.image = dstImage;
+		imageBarrier_toReadable.subresourceRange = range;
+		imageBarrier_toReadable.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+		imageBarrier_toReadable.newLayout = outLayout;
+		imageBarrier_toReadable.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		imageBarrier_toReadable.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+		vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &imageBarrier_toReadable);
+		vkEndCommandBuffer(cmd);
+
+		// 7. Sumbit commands to GPU and wait for them to complete
+		VkSubmitInfo submitInfo{ VK_STRUCTURE_TYPE_SUBMIT_INFO };
+		submitInfo.commandBufferCount = 1;
+		submitInfo.pCommandBuffers = &cmd;
+		vkQueueSubmit(graphics_queue, 1, &submitInfo, VK_NULL_HANDLE);
+		vkQueueWaitIdle(graphics_queue);
+		staging.Destroy(device);
+	}
+	vkFreeCommandBuffers(device, command_pool, 1, &cmd);
 }
 
 // ImGui does not recommend putting itself in a DLL,

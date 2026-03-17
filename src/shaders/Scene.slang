@@ -17,14 +17,18 @@ struct Scene
 	StructuredBuffer<Light>          lights;
 	StructuredBuffer<TextureInfo>    texture_infos;
 	ByteAddressBuffer                values; // For light sampling!
+	StructuredBuffer<Medium>         media;
 	SamplerState                     sampler;
 	Texture2D                        textures[MAX_TEXTURE_COUNT];
+	SamplerState                     volume_sampler;
+	Texture3D<float>                 volumes[MAX_TEXTURE_COUNT];
 
     func accumulate_sample(uint2 pixel_index, float4 result)
     {
         if (any(isnan(result)))
         {
             result = 0; // Just throw out bad samples
+          //  result = 1e9 * float4(1, 0, 1, 1);
 		}
         if (frame.index == 0)
         {
@@ -58,6 +62,16 @@ struct Scene
 		/* Direction */ dir_light / d,
 		/* TMax      */ (1 - shadow_epsilon()) * d
         };
+	}
+
+    RayDesc make_ray(float3 origin, float3 direction)
+    {
+        return {
+		/* Origin    */ origin,
+		/* TMin      */ intersection_epsilon(),
+		/* Direction */ direction,
+		/* TMax      */ float.maxValue
+		};
 	}
 };
 
