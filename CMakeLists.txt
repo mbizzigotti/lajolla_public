@@ -26,7 +26,7 @@ file(GLOB SHADER_SOURCE "${SHADER_SOURCE_DIR}/*.slang")
 macro(addShaderCompile arg1 arg2)
 	add_custom_command(
 		OUTPUT ${arg1}.spv
-		COMMAND ${SLANGC_EXECUTABLE} ${SHADER_SOURCE_DIR}/${arg2} -target spirv -entry ${arg1} -o ${CMAKE_BINARY_DIR}/${arg1}.spv
+		COMMAND ${SLANGC_EXECUTABLE} ${SHADER_SOURCE_DIR}/${arg2} -fp-mode precise -target spirv -entry ${arg1} -o ${CMAKE_BINARY_DIR}/${arg1}.spv
 		DEPENDS ${SHADER_SOURCE}
 		COMMENT ${arg1}.spv
 	)

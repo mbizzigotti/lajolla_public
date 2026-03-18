@@ -6,7 +6,7 @@
 #include "timer.h"
 #include <fstream>
 
-#define __DEBUG_SINGLE_FRAME__ 0
+#define __DEBUG_SINGLE_FRAME__ 1
 
 #ifdef ERROR
 #undef ERROR

@@ -10,8 +10,9 @@ import Material;
 import Medium;
 import PhaseFunction;
 
-#define DEBUG_PIXEL (int2(325, 209))
-#if 0
+#define DEBUG_PIXEL (int2(436, 190))
+//#define DEBUG_PIXEL (int2(426, 168))
+#if 1
 #define NAN1_CHECK(x, ...) if (all(DispatchRaysIndex().xy == DEBUG_PIXEL) && isnan(x))      printf("[NAN " #x "] " __VA_ARGS__)
 #define NAN3_CHECK(x, ...) if (all(DispatchRaysIndex().xy == DEBUG_PIXEL) && any(isnan(x))) printf("[NAN " #x "] " __VA_ARGS__)
 #define DEBUG(...) if (all(DispatchRaysIndex().xy == DEBUG_PIXEL)) printf(__VA_ARGS__)
@@ -37,7 +38,9 @@ void rgen_vol_path_tracing()
     RayDifferential ray_diff = init_ray_differential(dimensions);
     float3 radiance = 0;
 	// TODO: Specialization Constant?
-#if VOL_PATH_VERSION == 1
+#if VOL_PATH_VERSION == -1
+    radiance = debug_sigma_a(ray, ray_diff, rng);
+#elif VOL_PATH_VERSION == 1
 	radiance = vol_path_tracing_1(ray, ray_diff, rng);
 #elif VOL_PATH_VERSION == 2
 	radiance = vol_path_tracing_2(ray, ray_diff, rng);
@@ -50,7 +53,37 @@ void rgen_vol_path_tracing()
 #else
     radiance = vol_path_tracing(ray, ray_diff, rng);
 #endif
+
     scene.accumulate_sample(pixel_index, float4(radiance, 1));
+}
+
+// This test makes a lot of assumptions about the scene!
+float3 debug_sigma_a(RayDesc ray, in RayDifferential ray_diff, inout pcg32_state rng)
+{
+    Optional<PathVertex> surface_vertex = intersect(ray, ray_diff);
+    if (!surface_vertex.hasValue) return 0;
+	PathVertex vertex = surface_vertex.value;
+    if (vertex.interior_medium_id == -1) return 0;
+    ray.Origin = vertex.position;
+    ray.TMin = scene.intersection_epsilon();
+    ray.TMax = float.maxValue;
+    Optional<PathVertex> medium_vertex = intersect(ray, ray_diff);
+    if (!medium_vertex.hasValue) return 0;
+    vertex = medium_vertex.value;
+
+    Medium medium = scene.media[vertex.interior_medium_id];
+    float t_max = distance(ray.Origin, vertex.position);
+    float dt = 0.025;
+    float3 radiance = 0; // "radiance"
+
+	// Integrate sigma_a along the ray
+    for (float t = 0; t < 2.0f; t += dt) {
+        float3 p = ray.Origin + t * ray.Direction;
+        float3 sigma_a = get_sigma_a(medium, p);
+        radiance += sigma_a * dt;
+    }
+
+    return 20 * radiance;
 }
 
 [ForceInline]
@@ -990,7 +1023,7 @@ float3 vol_path_tracing(RayDesc ray, in RayDifferential ray_diff, inout pcg32_st
         // Update "vertex". Compute a transmittance and its PDF.
         float3 transmittance = 1;
         // Now we have different transmittance sampling strategy for each channel,
-        // so the PDF is a float3 instead of a float.
+        // so the PDF is a float3 instead of a Real.
         float3 trans_dir_pdf = 1;
         float3 trans_nee_pdf = 1;
         if (current_medium_id >= 0) {
@@ -1080,12 +1113,14 @@ float3 vol_path_tracing(RayDesc ray, in RayDifferential ray_diff, inout pcg32_st
                         vertex.interior_medium_id = current_medium_id;
                         vertex.exterior_medium_id = current_medium_id;
                         break;
-                    } else {
+                    }
+                    else {
                         transmittance *= exp(-majorant * t) * sigma_n / max_comp(majorant);
                         trans_dir_pdf *= exp(-majorant * t) * sigma_n / max_comp(majorant);
                         trans_nee_pdf *= exp(-majorant * t) * majorant / max_comp(majorant);
                     }
-                } else { // t >= max_t
+                }
+                else { // t >= max_t
                     // Only a single event when we reach the end
                     transmittance *= exp(-majorant * dt);
                     trans_dir_pdf *= exp(-majorant * dt);
@@ -1101,6 +1136,7 @@ float3 vol_path_tracing(RayDesc ray, in RayDifferential ray_diff, inout pcg32_st
 
         // Update current path throughput with transmittance
         current_path_throughput *= (transmittance / average(trans_dir_pdf));
+        NAN3_CHECK(current_path_throughput, "T[%v3f][%v3f]", transmittance, trans_dir_pdf);
 
         // If we didn't scatter and didn't reach a surface either,
         // we're done.
@@ -1117,7 +1153,9 @@ float3 vol_path_tracing(RayDesc ray, in RayDifferential ray_diff, inout pcg32_st
                         // we don't need multiple importance sampling.
                         radiance += current_path_throughput *
                                     emission(vertex, -ray.Direction);
-                    } else {
+                        NAN3_CHECK(radiance, "H[%v3f]", current_path_throughput);
+                    }
+                    else {
                         // Need to account for next event estimation
                         int light_id = vertex.area_light_id;
                         // assert(light_id >= 0);
@@ -1142,6 +1180,7 @@ float3 vol_path_tracing(RayDesc ray, in RayDifferential ray_diff, inout pcg32_st
                         // current_path_throughput already accounts for dir_pdf & transmittance.
                         radiance += current_path_throughput *
                                     emission(vertex, -ray.Direction) * w2;
+                        NAN3_CHECK(radiance, "H[%v3f][%f] [%f][%f] [%v3f]", current_path_throughput, w2, p_dir, p_nee, multi_trans_dir_pdf);
                     }
                     return radiance;
                 }
@@ -1234,7 +1273,8 @@ float3 vol_path_tracing(RayDesc ray, in RayDifferential ray_diff, inout pcg32_st
                             if (max_comp(T_light) <= 0) {
                                 break;
                             }
-                        } else { // t >= next_t: we hit a surface
+                        }
+                        else { // t >= next_t: we hit a surface
                             // account for the probability of sampling more than next_t
                             T_light *= exp(-majorant * dt);
                             p_trans_nee *= exp(-majorant * dt);
@@ -1247,7 +1287,8 @@ float3 vol_path_tracing(RayDesc ray, in RayDifferential ray_diff, inout pcg32_st
                 if (!shadow_vertex.hasValue) {
                     // Nothing is blocking, we're done
                     break;
-                } else {
+                }
+                else {
                     // Something is blocking: is it an opaque surface?
                     if (shadow_vertex.value.material_id >= 0) {
                         // we're blocked
@@ -1282,8 +1323,10 @@ float3 vol_path_tracing(RayDesc ray, in RayDifferential ray_diff, inout pcg32_st
                 if (scatter) {
                     // assert(current_medium_id >= 0);
                     Medium medium = scene.media[current_medium_id];
-                    f = eval(medium.phase_function, dir_view, dir_light);
-                } else {
+                    PhaseFunction phase_function = medium.phase_function;
+                    f = eval(phase_function, dir_view, dir_light);
+                }
+                else {
                     Material mat = scene.materials[vertex.material_id];
                     f = eval(mat, vertex, dir_view, dir_light);
                 }
@@ -1292,7 +1335,7 @@ float3 vol_path_tracing(RayDesc ray, in RayDifferential ray_diff, inout pcg32_st
                     Medium medium = scene.media[current_medium_id];
                     sigma_s = get_sigma_s(medium, vertex.position);
                 }
-                float3 L = emission(light, -dir_light, float(0), point_on_light);
+                float3 L = emission(light, -dir_light, 0, point_on_light);
                 C1 = current_path_throughput * sigma_s * T_light * G * f * L / p1;
                 // Multiple importance sampling: it's also possible
                 // that a phase function sampling + multiple steps exponential sampling
@@ -1302,7 +1345,8 @@ float3 vol_path_tracing(RayDesc ray, in RayDifferential ray_diff, inout pcg32_st
                     // assert(current_medium_id >= 0);
                     Medium medium = scene.media[current_medium_id];
                     p2 = pdf_sample_phase(medium.phase_function, dir_view, dir_light) * G;
-                } else {
+                }
+                else {
                     // assert(vertex.material_id >= 0);
                     Material mat = scene.materials[vertex.material_id];
                     p2 = pdf_sample_bsdf(mat, vertex, dir_view, dir_light) * G;
@@ -1312,6 +1356,7 @@ float3 vol_path_tracing(RayDesc ray, in RayDifferential ray_diff, inout pcg32_st
             }
         }
         radiance += C1 * w1;
+        NAN3_CHECK(radiance, "N[%v3f][%f]", C1, w1);
 
         // Sample the next direction & update current_path_throughput
         float3 next_dir;
@@ -1319,24 +1364,25 @@ float3 vol_path_tracing(RayDesc ray, in RayDifferential ray_diff, inout pcg32_st
             // Phase function sampling
             // assert(current_medium_id >= 0);
             Medium medium = scene.media[current_medium_id];
-            PhaseFunction phase_function = medium.phase_function;
             float3 dir_view = -ray.Direction;
             float2 phase_rnd_param = rng.next_float2();
             Optional<float3> phase_sample =
-                sample_phase_function(phase_function, dir_view,
+                sample_phase_function(medium.phase_function, dir_view,
                                       phase_rnd_param);
             if (!phase_sample.hasValue) {
                 // Phase function sampling failed. Abort the loop.
                 break;
             }
             next_dir = phase_sample.value;
-            float3 f = eval(phase_function, dir_view, next_dir);
-            float p2 = pdf_sample_phase(phase_function, dir_view, next_dir);
+            float3 f = eval(medium.phase_function, dir_view, next_dir);
+            float p2 = pdf_sample_phase(medium.phase_function, dir_view, next_dir);
             dir_pdf = p2;
             // Need to remember multiplying the scattering coefficient!
             float3 sigma_s = get_sigma_s(medium, vertex.position);
             current_path_throughput *= sigma_s * (f / p2);
-        } else {
+            NAN3_CHECK(current_path_throughput, "S[%v3f][%v3f][%f]", sigma_s, f, p2);
+        }
+        else {
             // BSDF sampling
             Material mat = scene.materials[vertex.material_id];
             float3 dir_view = -ray.Direction;
@@ -1352,6 +1398,7 @@ float3 vol_path_tracing(RayDesc ray, in RayDifferential ray_diff, inout pcg32_st
             float p2 = pdf_sample_bsdf(mat, vertex, dir_view, next_dir);
             dir_pdf = p2;
             current_path_throughput *= (f / p2);
+            NAN3_CHECK(current_path_throughput, "S[%v3f][%f]", f, p2);
         }
         never_scatter = false;
 
@@ -1359,7 +1406,7 @@ float3 vol_path_tracing(RayDesc ray, in RayDifferential ray_diff, inout pcg32_st
         // Russian roulette heuristics
         float rr_prob = 1;
         if (bounces >= scene.options.rr_depth) {
-            rr_prob = min(max_comp(current_path_throughput), float(0.95));
+            rr_prob = min(max_comp(current_path_throughput), 0.95);
             if (rng.next_float() > rr_prob) {
                 // Terminate the path
                 break;
@@ -1369,7 +1416,8 @@ float3 vol_path_tracing(RayDesc ray, in RayDifferential ray_diff, inout pcg32_st
 
         // Update rays
         ray = scene.make_ray(vertex.position, next_dir);
-        current_medium_id = update_medium_id(vertex, ray, current_medium_id);
+        current_medium_id =
+            update_medium_id(vertex, ray, current_medium_id);
     }
     return radiance;
 }
