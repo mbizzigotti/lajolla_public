@@ -197,6 +197,8 @@ void chit_sphere(inout HitPayload payload, in SphereHitAttributes attr)
     payload.area_light_id = shape.area_light_id;
     payload.interior_medium_id = shape.interior_medium_id;
     payload.exterior_medium_id = shape.exterior_medium_id;
+
+    float3 geometric_normal = normalize(attr.normal);
 	
     // To compute the shading frame, we use the geometry normal as normal,
     // and dpdu as one of the tangent vector. 
@@ -213,10 +215,10 @@ void chit_sphere(inout HitPayload payload, in SphereHitAttributes attr)
                    -shape.radius * sin(attr.uv[1])};
     // dpdu may not be orthogonal to shading normal:
     // subtract the projection of shading_normal onto dpdu to make them orthogonal
-    float3 tangent = normalize(dpdu - attr.normal * dot(attr.normal, dpdu));
-    Frame shading_frame = Frame(tangent, normalize(cross(attr.normal, tangent)), attr.normal);
+    float3 tangent = normalize(dpdu - geometric_normal * dot(geometric_normal, dpdu));
+    Frame shading_frame = Frame(tangent, normalize(cross(geometric_normal, tangent)), geometric_normal);
 	
-    payload.geometric_normal = attr.normal;
+    payload.geometric_normal = geometric_normal;
     payload.shading_info = ShadingInfo(shading_frame, attr.uv,
 						1 / shape.radius, /* mean curvature */
                        (length(dpdu) + length(dpdv)) / 2);

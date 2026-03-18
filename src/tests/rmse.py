@@ -32,7 +32,7 @@ def display_transform(img, exposure):
     return np.clip(img, 0, 1)
 
 # Automatically choose exposure from reference
-exposure = -np.log2(np.mean(ref) + 1e-6) - 2
+exposure = -np.log2(np.mean(ref) + 1e-6) + float(argv[3] if len(argv) > 3 else 0)
 
 ref_disp = display_transform(ref, exposure)
 test_disp = display_transform(test, exposure)

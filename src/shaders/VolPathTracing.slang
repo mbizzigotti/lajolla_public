@@ -10,6 +10,17 @@ import Material;
 import Medium;
 import PhaseFunction;
 
+#define DEBUG_PIXEL (int2(325, 209))
+#if 0
+#define NAN1_CHECK(x, ...) if (all(DispatchRaysIndex().xy == DEBUG_PIXEL) && isnan(x))      printf("[NAN " #x "] " __VA_ARGS__)
+#define NAN3_CHECK(x, ...) if (all(DispatchRaysIndex().xy == DEBUG_PIXEL) && any(isnan(x))) printf("[NAN " #x "] " __VA_ARGS__)
+#define DEBUG(...) if (all(DispatchRaysIndex().xy == DEBUG_PIXEL)) printf(__VA_ARGS__)
+#else
+#define NAN1_CHECK(x, ...) 0
+#define NAN3_CHECK(x, ...) 0
+#define DEBUG(...) 0
+#endif
+
 #define VOL_PATH_VERSION 6
 
 // ------------------------------------------------------------
@@ -712,6 +723,7 @@ float3 vol_path_tracing_5(RayDesc ray, in RayDifferential ray_diff, inout pcg32_
 
         // Update current path throughput with transmittance
         current_path_throughput *= (transmittance / trans_pdf);
+        DEBUG("UPDATE (%v3f) %v3f %f [SCATTER %i] [VERTEX %i]", current_path_throughput, transmittance, trans_pdf, scatter, surface_vertex.hasValue);
 
         // If we didn't scatter and didn't reach a surface either,
         // we're done
@@ -785,6 +797,7 @@ float3 vol_path_tracing_5(RayDesc ray, in RayDifferential ray_diff, inout pcg32_
             float3 point_rnd = rng.next_float3();
             Light light = scene.lights[light_id];
             PointAndNormal point_on_light = sample_point_on_light(light, vertex.position, point_rnd);
+            DEBUG("NEE (%v3f)(%v3f) %v3f", point_on_light.position, point_on_light.normal, vertex.position);
             // Compute transmittance to light. Skip through index-matching shapes.
             float3 T_light = 1;
             float3 p = vertex.position;
@@ -885,6 +898,7 @@ float3 vol_path_tracing_5(RayDesc ray, in RayDifferential ray_diff, inout pcg32_
                 }
                 p2 *= p_trans_dir;
                 w1 = (p1 * p1) / (p1 * p1 + p2 * p2);
+                DEBUG("NEE CONTRIB (%v3f)(%f) P1 %f P2 %f", C1, w1, p1, p2);
             }
         }
         radiance += C1 * w1;
@@ -929,9 +943,7 @@ float3 vol_path_tracing_5(RayDesc ray, in RayDifferential ray_diff, inout pcg32_
             dir_pdf = p2;
             // Need to remember multiplying the scattering coefficient!
             current_path_throughput *= (f / p2);
-            if (any(isnan(current_path_throughput))) {
-                break;
-			}
+            NAN3_CHECK(current_path_throughput, "[%v3f][%v3f][%v3f][%v3f]", dir_view, next_dir, vertex.shading_frame.n, vertex.geometric_normal);
         }
         never_scatter = false;
 
