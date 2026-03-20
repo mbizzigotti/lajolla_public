@@ -472,6 +472,11 @@ Texture<Real> parse_float_texture(
     } else if (type == "float") {
         return make_constant_float_texture(
             parse_float(node.attribute("value").value(), default_map));
+    }
+     else if (type == "rgb") {
+        printf("warning: converting rgb to float");
+         return make_constant_float_texture(
+             average(parse_vector3(node.attribute("value").value(), default_map)));
     } else if (type == "texture") {
         ParsedTexture t = parse_texture(node, default_map);
         // increment ref_id_counter until we can't find the name in texture_pool

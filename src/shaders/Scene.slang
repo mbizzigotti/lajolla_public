@@ -28,7 +28,7 @@ struct Scene
         if (any(isnan(result)))
         {
             result = 0; // Just throw out bad samples
-            result = 1e9 * float4(1, 0, 1, 1);
+        //    result = 1e9 * float4(1, 0, 1, 1);
 		}
         if (frame.index == 0)
         {

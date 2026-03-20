@@ -10,11 +10,12 @@ import Material;
 import Medium;
 import PhaseFunction;
 
-#define DEBUG_PIXEL (int2(436, 190))
+//#define DEBUG_PIXEL (int2(436, 190)) // High on volume (NEE)
+#define DEBUG_PIXEL (int2(320, 403)) // Low on volume (direct)
 //#define DEBUG_PIXEL (int2(426, 168))
-#if 1
-#define NAN1_CHECK(x, ...) if (all(DispatchRaysIndex().xy == DEBUG_PIXEL) && isnan(x))      printf("[NAN " #x "] " __VA_ARGS__)
-#define NAN3_CHECK(x, ...) if (all(DispatchRaysIndex().xy == DEBUG_PIXEL) && any(isnan(x))) printf("[NAN " #x "] " __VA_ARGS__)
+#if 0
+#define NAN1_CHECK(x, ...) if (isnan(x))      printf("[NAN " #x "] " __VA_ARGS__)
+#define NAN3_CHECK(x, ...) if (any(isnan(x))) printf("[NAN " #x "] " __VA_ARGS__)
 #define DEBUG(...) if (all(DispatchRaysIndex().xy == DEBUG_PIXEL)) printf(__VA_ARGS__)
 #else
 #define NAN1_CHECK(x, ...) 0
@@ -22,7 +23,7 @@ import PhaseFunction;
 #define DEBUG(...) 0
 #endif
 
-#define VOL_PATH_VERSION 6
+#define VOL_PATH_VERSION 5
 
 // ------------------------------------------------------------
 // Ray Generation Shader (Volume Path Tracing)
@@ -1108,6 +1109,7 @@ float3 vol_path_tracing(RayDesc ray, in RayDifferential ray_diff, inout pcg32_st
                         // sigma_t will be accounted for later
                         transmittance *= exp(-majorant * t) / max_comp(majorant);
                         trans_dir_pdf *= exp(-majorant * t) * sigma_t / max_comp(majorant);
+                        current_path_throughput *= 1 / average(sigma_t);
                         // Update vertex information
                         vertex.position = ray.Origin + accum_t * ray.Direction;
                         vertex.interior_medium_id = current_medium_id;
@@ -1118,6 +1120,7 @@ float3 vol_path_tracing(RayDesc ray, in RayDifferential ray_diff, inout pcg32_st
                         transmittance *= exp(-majorant * t) * sigma_n / max_comp(majorant);
                         trans_dir_pdf *= exp(-majorant * t) * sigma_n / max_comp(majorant);
                         trans_nee_pdf *= exp(-majorant * t) * majorant / max_comp(majorant);
+                        current_path_throughput *= sigma_n / average(sigma_n);
                     }
                 }
                 else { // t >= max_t
@@ -1135,7 +1138,7 @@ float3 vol_path_tracing(RayDesc ray, in RayDifferential ray_diff, inout pcg32_st
         multi_trans_nee_pdf *= trans_nee_pdf;
 
         // Update current path throughput with transmittance
-        current_path_throughput *= (transmittance / average(trans_dir_pdf));
+        //current_path_throughput *= (transmittance / average(trans_dir_pdf));
         NAN3_CHECK(current_path_throughput, "T[%v3f][%v3f]", transmittance, trans_dir_pdf);
 
         // If we didn't scatter and didn't reach a surface either,
@@ -1176,7 +1179,7 @@ float3 vol_path_tracing(RayDesc ray, in RayDifferential ray_diff, inout pcg32_st
                         float G = fabs(dot(vertex.geometric_normal, light_dir)) /
                                  distance_squared(nee_p_cache, vertex.position);
                         float p_dir = dir_pdf * average(multi_trans_dir_pdf) * G;
-                        float w2 = (p_dir * p_dir) / (p_dir * p_dir + p_nee * p_nee);
+                        float w2 = 0.5;//(p_dir * p_dir) / (p_dir * p_dir + p_nee * p_nee);
                         // current_path_throughput already accounts for dir_pdf & transmittance.
                         radiance += current_path_throughput *
                                     emission(vertex, -ray.Direction) * w2;
@@ -1220,11 +1223,13 @@ float3 vol_path_tracing(RayDesc ray, in RayDifferential ray_diff, inout pcg32_st
             PointAndNormal point_on_light = sample_point_on_light(light, vertex.position, point_rnd);
             // Compute transmittance to light. Skip through index-matching shapes.
             float3 T_light = 1;
+            float3 C_light = 1;
             float3 p = vertex.position;
             int shadow_medium_id = current_medium_id;
             int shadow_bounces = 0;
             float3 p_trans_nee = 1;
             float3 p_trans_dir = 1;
+            float3 p_pseudo = 1;
             while (true) {
                 float3 dir_light = normalize(point_on_light.position - p);
                 RayDesc shadow_ray;
@@ -1267,16 +1272,18 @@ float3 vol_path_tracing(RayDesc ray, in RayDifferential ray_diff, inout pcg32_st
                         float3 sigma_n = majorant - sigma_t;
                         if (t < dt) {
                             // didn't hit the surface, so this is a null-scattering event
-                            T_light *= exp(-majorant * t) * sigma_n / max_comp(majorant);
+                            T_light     *= exp(-majorant * t) * sigma_n / max_comp(majorant);
                             p_trans_nee *= exp(-majorant * t) * majorant / max_comp(majorant);
                             p_trans_dir *= exp(-majorant * t) * sigma_n / max_comp(majorant);
+                            C_light     *= sigma_n / average(majorant);
+							p_pseudo    *= majorant / sigma_n;
                             if (max_comp(T_light) <= 0) {
                                 break;
                             }
                         }
                         else { // t >= next_t: we hit a surface
                             // account for the probability of sampling more than next_t
-                            T_light *= exp(-majorant * dt);
+                            T_light     *= exp(-majorant * dt);
                             p_trans_nee *= exp(-majorant * dt);
                             p_trans_dir *= exp(-majorant * dt);
                             break;
@@ -1293,6 +1300,7 @@ float3 vol_path_tracing(RayDesc ray, in RayDifferential ray_diff, inout pcg32_st
                     if (shadow_vertex.value.material_id >= 0) {
                         // we're blocked
                         T_light = 0;
+                        C_light = 0;
                         break;
                     }
                     // otherwise, we want to pass through -- this introduces
@@ -1301,6 +1309,7 @@ float3 vol_path_tracing(RayDesc ray, in RayDifferential ray_diff, inout pcg32_st
                     if (max_depth != -1 && bounces + shadow_bounces + 1 >= max_depth) {
                         // Reach the max no. of vertices
                         T_light = 0;
+                        C_light = 0;
                         break;
                     }
                     // let's update and continue
@@ -1309,14 +1318,13 @@ float3 vol_path_tracing(RayDesc ray, in RayDifferential ray_diff, inout pcg32_st
                 }
             }
 
-            if (max_comp(T_light) > 0 && max_comp(p_trans_nee) > 0) {
+            if (max_comp(C_light) > 0) {
                 // Compute sigma_s * T * T_light * G * f * L
                 float3 dir_light = normalize(point_on_light.position - vertex.position);
                 float G = max(-dot(dir_light, point_on_light.normal), float(0)) /
                          distance_squared(point_on_light.position, vertex.position);
                 float p1 = light_pmf(light_id) *
-                          pdf_point_on_light(light, point_on_light, vertex.position) *
-                          average(p_trans_nee);
+                           pdf_point_on_light(light, point_on_light, vertex.position);
                 float3 dir_view = -ray.Direction;
                 float3 f;
                 // are we on a surface or are we in a medium?
@@ -1336,7 +1344,7 @@ float3 vol_path_tracing(RayDesc ray, in RayDifferential ray_diff, inout pcg32_st
                     sigma_s = get_sigma_s(medium, vertex.position);
                 }
                 float3 L = emission(light, -dir_light, 0, point_on_light);
-                C1 = current_path_throughput * sigma_s * T_light * G * f * L / p1;
+                C1 = current_path_throughput * sigma_s * G * f * L * C_light / p1;
                 // Multiple importance sampling: it's also possible
                 // that a phase function sampling + multiple steps exponential sampling
                 // will reach the light source.
@@ -1351,12 +1359,14 @@ float3 vol_path_tracing(RayDesc ray, in RayDifferential ray_diff, inout pcg32_st
                     Material mat = scene.materials[vertex.material_id];
                     p2 = pdf_sample_bsdf(mat, vertex, dir_view, dir_light) * G;
                 }
-                p2 *= average(p_trans_dir);
-                w1 = (p1 * p1) / (p1 * p1 + p2 * p2);
+                // p1 *= average(p_trans_nee);
+                // p2 *= average(p_trans_dir);
+                w1 = 0.5;//((p1 * p1) / (p1 * p1 + p2 * p2)) * average(p_pseudo);
+                //NAN3_CHECK(w1, "N[%v3f][%v3f][%f][%f]", p_trans_nee, p_trans_dir, p1, p2);
             }
         }
         radiance += C1 * w1;
-        NAN3_CHECK(radiance, "N[%v3f][%f]", C1, w1);
+        //NAN3_CHECK(radiance, "N[%v3f][%f]", C1, w1);
 
         // Sample the next direction & update current_path_throughput
         float3 next_dir;

@@ -1157,7 +1157,7 @@ Spectrum vol_path_tracing(const Scene& scene,
                         Real G = fabs(dot(vertex.geometric_normal, light_dir)) /
                             distance_squared(nee_p_cache, vertex.position);
                         Real p_dir = dir_pdf * average(multi_trans_dir_pdf) * G;
-                        Real w2 = (p_dir * p_dir) / (p_dir * p_dir + p_nee * p_nee);
+                        Real w2 = 1.0;// p_dir / (p_dir + p_nee);
                         // current_path_throughput already accounts for dir_pdf & transmittance.
                         radiance += current_path_throughput *
                             emission(vertex, -ray.dir, scene) * w2;
@@ -1193,7 +1193,7 @@ Spectrum vol_path_tracing(const Scene& scene,
         // next event estimation
         Spectrum C1 = make_zero_spectrum();
         Real w1 = 0;
-        {
+        if (0) {
             // Sample a point on the light source.
             Vector2 light_uv{ next_pcg32_real<Real>(rng), next_pcg32_real<Real>(rng) };
             Real light_w = next_pcg32_real<Real>(rng);
@@ -1335,10 +1335,10 @@ Spectrum vol_path_tracing(const Scene& scene,
                     p2 = pdf_sample_bsdf(mat, dir_view, dir_light, vertex, scene.texture_pool) * G;
                 }
                 p2 *= average(p_trans_dir);
-                w1 = (p1 * p1) / (p1 * p1 + p2 * p2);
+                w1 = p1 / (p1 + p2);
             }
         }
-        radiance += C1 * w1;
+        //radiance += C1 * w1;
 
         // Sample the next direction & update current_path_throughput
         Vector3 next_dir;

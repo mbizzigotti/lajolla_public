@@ -6,7 +6,7 @@
 #include "timer.h"
 #include <fstream>
 
-#define __DEBUG_SINGLE_FRAME__ 1
+#define __DEBUG_SINGLE_FRAME__ 0
 
 #ifdef ERROR
 #undef ERROR
@@ -892,7 +892,7 @@ void GPUDevice::attach(RGFW_window* window, Scene* scene, const std::string &pat
 	VkPipelineShaderStageCreateInfo stages[6] = {};
 
 	scene_name = fs::path(path).stem().generic_string();
-
+	
 	LOG("Creating Window Surface...");
 	{
 		assert(RGFW_window_createSurface_Vulkan(window, instance, &surface) == VK_SUCCESS);
